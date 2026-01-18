@@ -2,9 +2,9 @@
     "name": "torrent-streamer",
     "version": "1.0.0",
     "description": "Simple torrent streamer for magnet links",
-    "main": "torrent-streamer.js",
+    "main": "server.js",
     "scripts": {
-        "start": "node torrent-streamer.js"
+        "start": "node server.js"
     },
     "dependencies": {
         "webtorrent": "^1.8.0",
