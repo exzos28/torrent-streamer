@@ -2,13 +2,29 @@
     "name": "torrent-streamer",
     "version": "1.0.0",
     "description": "Simple torrent streamer for magnet links",
-    "main": "server.js",
+    "main": "dist/server.js",
     "scripts": {
-        "start": "node server.js"
+        "start": "node dist/server.js",
+        "prestart": "yarn build",
+        "build": "tsc",
+        "dev": "ts-node src/server.ts",
+        "lint": "eslint . --ext .js,.ts",
+        "lint:fix": "eslint . --ext .js,.ts --fix",
+        "type-check": "tsc --noEmit"
     },
     "dependencies": {
-        "webtorrent": "^1.8.0",
-        "express": "^4.18.2"
+        "express": "^4.18.2",
+        "webtorrent": "^1.8.0"
+    },
+    "devDependencies": {
+        "@types/express": "^4.17.21",
+        "@types/node": "^20.10.0",
+        "@types/webtorrent": "^0.110.1",
+        "@typescript-eslint/eslint-plugin": "^6.15.0",
+        "@typescript-eslint/parser": "^6.15.0",
+        "eslint": "^8.56.0",
+        "ts-node": "^10.9.2",
+        "typescript": "^5.3.3"
     },
     "engines": {
         "node": ">=14.0.0"

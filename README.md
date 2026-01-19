@@ -3,7 +3,7 @@
 ## Installation
 
 ```bash
-npm install
+yarn install
 ```
 
 ## Usage
@@ -11,7 +11,7 @@ npm install
 ### Start the server
 
 ```bash
-npm run start
+yarn start
 ```
 
 Server will start on `http://localhost:3000`
@@ -81,6 +81,17 @@ curl -X DELETE "http://localhost:3000/torrent?magnet=magnet:?xt=..."
 ```
 magnet:?xt=urn:btih:dd8255ecdc7ca55fb0bbf81323d87062db1f6d1c&dn=Big+Buck+Bunny
 ```
+
+## Development
+
+### Available Scripts
+
+- `yarn start` - Start the server
+- `yarn build` - Compile TypeScript to JavaScript
+- `yarn dev` - Start server with ts-node (TypeScript)
+- `yarn lint` - Run ESLint to check code quality
+- `yarn lint:fix` - Automatically fix ESLint errors
+- `yarn type-check` - Check TypeScript types without compiling
 
 ## Configuration
 
