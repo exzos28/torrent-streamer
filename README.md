@@ -92,6 +92,10 @@ magnet:?xt=urn:btih:dd8255ecdc7ca55fb0bbf81323d87062db1f6d1c&dn=Big+Buck+Bunny
 - `yarn lint` - Run ESLint to check code quality
 - `yarn lint:fix` - Automatically fix ESLint errors
 - `yarn type-check` - Check TypeScript types without compiling
+- `yarn test` - Run tests in watch mode
+- `yarn test:run` - Run tests once
+- `yarn test:ui` - Run tests with UI
+- `yarn test:coverage` - Run tests with coverage report
 
 ## Configuration
 
