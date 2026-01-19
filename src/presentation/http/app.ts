@@ -8,8 +8,10 @@ import { GetTorrentInfoUseCase } from '../../application/use-cases/GetTorrentInf
 import { AddTorrentUseCase } from '../../application/use-cases/AddTorrentUseCase';
 import { RemoveTorrentUseCase } from '../../application/use-cases/RemoveTorrentUseCase';
 import { ListTorrentsUseCase } from '../../application/use-cases/ListTorrentsUseCase';
+import { GetTorrentsDebugInfoUseCase } from '../../application/use-cases/GetTorrentsDebugInfoUseCase';
 import { StreamController } from './controllers/StreamController';
 import { TorrentController } from './controllers/TorrentController';
+import { DebugController } from './controllers/DebugController';
 import { createStreamRoutes } from './routes/stream.routes';
 
 /**
@@ -33,6 +35,7 @@ export function createApp(
     const addTorrentUseCase = new AddTorrentUseCase(repo, appLogger);
     const removeTorrentUseCase = new RemoveTorrentUseCase(repo, appLogger);
     const listTorrentsUseCase = new ListTorrentsUseCase(repo);
+    const getTorrentsDebugInfoUseCase = new GetTorrentsDebugInfoUseCase(repo);
 
     // Initialize controllers
     const streamController = new StreamController(streamVideoUseCase, service, repo);
@@ -42,12 +45,13 @@ export function createApp(
         removeTorrentUseCase,
         listTorrentsUseCase
     );
+    const debugController = new DebugController(getTorrentsDebugInfoUseCase);
 
     // Initialize Express app
     const app: Express = express();
 
     // Setup routes
-    app.use('/', createStreamRoutes(streamController, torrentController));
+    app.use('/', createStreamRoutes(streamController, torrentController, debugController));
 
     return app;
 }

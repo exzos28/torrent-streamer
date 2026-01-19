@@ -20,7 +20,8 @@ describe('RemoveTorrentUseCase', () => {
             getInfo: vi.fn(),
             getVideoFile: vi.fn(),
             remove: vi.fn(),
-            destroy: vi.fn()
+            destroy: vi.fn(),
+            getDebugInfo: vi.fn()
         };
 
         mockLogger = {

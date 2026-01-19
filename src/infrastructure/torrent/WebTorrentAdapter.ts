@@ -5,6 +5,16 @@
 import { Torrent, TorrentFile } from 'webtorrent';
 import { TorrentEntity, TorrentFileEntity } from '../../domain/entities';
 
+/**
+ * Options for createReadStream method
+ * WebTorrent's createReadStream requires both start and end, but we make them optional
+ * for convenience - undefined values are handled by WebTorrent
+ */
+type CreateReadStreamOptions = {
+  start?: number;
+  end?: number;
+};
+
 export class WebTorrentAdapter {
   static toTorrentEntity(torrent: Torrent): TorrentEntity {
     return {
@@ -24,11 +34,14 @@ export class WebTorrentAdapter {
       name: file.name,
       length: file.length,
       path: file.path,
-      createReadStream: (options?: { start?: number; end?: number }) => {
+      createReadStream: (options?: CreateReadStreamOptions) => {
         // WebTorrent's createReadStream accepts optional parameters
-        // We pass them through as-is, WebTorrent handles undefined values
-        const stream = file.createReadStream(options as any);
-        return stream as NodeJS.ReadableStream;
+        // TypeScript types require both start and end, but runtime accepts undefined
+        // We cast to satisfy TypeScript while maintaining runtime flexibility
+        const stream = file.createReadStream(
+          options ? ({ start: options.start, end: options.end } as { start: number; end: number }) : undefined
+        );
+        return stream;
       }
     };
   }

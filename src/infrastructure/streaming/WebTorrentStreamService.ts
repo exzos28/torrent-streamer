@@ -4,6 +4,7 @@ import config from '../../config';
 import { IStreamService } from '../../domain/interfaces/IStreamService';
 import { TorrentFileEntity } from '../../domain/entities';
 import { ILogger } from '../../domain/interfaces/ILogger';
+import { isExtendedTorrentFile } from '../torrent/WebTorrentExtendedTypes';
 
 /**
  * WebTorrent implementation of IStreamService
@@ -70,9 +71,18 @@ export class WebTorrentStreamService implements IStreamService {
       'Content-Type': 'video/mp4'
     });
 
-    const stream = file.createReadStream({ start: 0, end });
-    this._setupStreamHandlers(req, res, stream, fileName, 0, end);
-    stream.pipe(res);
+    try {
+      const stream = file.createReadStream({ start: 0, end });
+      this._setupStreamHandlers(req, res, stream, fileName, 0, end);
+      stream.pipe(res);
+    } catch (error) {
+      this.logger.error(`[${fileName}] Error creating read stream:`, error);
+      if (!res.headersSent) {
+        res.status(500).json({
+          error: 'Failed to create stream. Torrent may not be ready yet. Please try again in a moment.'
+        });
+      }
+    }
   }
 
   /**
@@ -94,18 +104,26 @@ export class WebTorrentStreamService implements IStreamService {
     // Determine end position
     const requestedEnd = parts[1] ? parseInt(parts[1], 10) : fileSize - 1;
 
-    // Limit chunk size to maximum value
-    const maxAllowedEnd = Math.min(start + config.MAX_CHUNK_SIZE - 1, fileSize - 1);
-    const end = Math.min(requestedEnd, maxAllowedEnd);
+    // Check if requesting entire file (or close to it)
+    // Only limit if requesting the whole file or very large portion
+    const requestedSize = requestedEnd - start + 1;
+    const isRequestingEntireFile = start === 0 && requestedEnd >= fileSize - 1;
+    const isRequestingLargePortion = requestedSize > fileSize * 0.9; // More than 90% of file
+
+    let end: number;
+    if (isRequestingEntireFile || isRequestingLargePortion) {
+      // Limit chunk size only when requesting entire file or large portion
+      const maxAllowedEnd = Math.min(start + config.MAX_CHUNK_SIZE - 1, fileSize - 1);
+      end = Math.min(requestedEnd, maxAllowedEnd);
+      this.logger.info(
+        `[${fileName}] Requesting ${isRequestingEntireFile ? 'entire file' : 'large portion'} (${(requestedSize / 1024 / 1024).toFixed(2)} MB), limiting to ${((end - start + 1) / 1024 / 1024).toFixed(2)} MB`
+      );
+    } else {
+      // For normal range requests, serve the full requested range without limits
+      end = Math.min(requestedEnd, fileSize - 1);
+    }
 
     const chunksize = end - start + 1;
-
-    // Warn if requested chunk is too large
-    if (requestedEnd - start > config.MAX_CHUNK_SIZE) {
-      this.logger.warn(
-        `[${fileName}] Requested chunk too large: ${((requestedEnd - start) / 1024 / 1024).toFixed(2)} MB, limiting to ${(config.MAX_CHUNK_SIZE / 1024 / 1024).toFixed(2)} MB`
-      );
-    }
 
     // Log requested chunk
     const startMB = (start / 1024 / 1024).toFixed(2);
@@ -125,12 +143,9 @@ export class WebTorrentStreamService implements IStreamService {
       return;
     }
 
-    // Check chunk availability and wait for pieces to load if needed
-    const piecesReady = await this._waitForChunkAvailability(file, fileName, start, end);
-
-    if (!piecesReady) {
-      this.logger.warn(`[${fileName}] Chunk ${start}-${end} not fully available, streaming anyway (may be slow)`);
-    }
+    // Prioritize pieces for this range (but don't wait - stream immediately)
+    // This helps WebTorrent focus on downloading needed pieces while we stream
+    await this._prioritizePieces(file, fileName, start, end);
 
     res.writeHead(206, {
       'Content-Range': `bytes ${start}-${end}/${fileSize}`,
@@ -140,121 +155,65 @@ export class WebTorrentStreamService implements IStreamService {
     });
 
     // Create stream for requested byte range
-    const stream = file.createReadStream({ start, end });
-    this._setupStreamHandlers(req, res, stream, fileName, start, end);
-    stream.pipe(res);
+    try {
+      const stream = file.createReadStream({ start, end });
+      this._setupStreamHandlers(req, res, stream, fileName, start, end);
+      stream.pipe(res);
+    } catch (error) {
+      this.logger.error(`[${fileName}] Error creating read stream for range ${start}-${end}:`, error);
+      if (!res.headersSent) {
+        res.status(500).json({
+          error: 'Failed to create stream. Torrent may not be ready yet. Please try again in a moment.'
+        });
+      }
+    }
   }
 
   /**
-   * Checks if chunk pieces are available and waits for them to load
-   * Also prioritizes downloading the requested pieces
+   * Prioritizes downloading pieces for the requested range
+   * Does NOT wait - just tells WebTorrent to prioritize these pieces
    * @private
-   * @returns Promise that resolves to true if pieces are ready, false if timeout
    */
-  private async _waitForChunkAvailability(
+  private async _prioritizePieces(
     file: TorrentFileEntity,
     fileName: string,
     start: number,
     end: number
-  ): Promise<boolean> {
+  ): Promise<void> {
     // Get raw WebTorrent file to access piece information
     const rawFile = this.rawFileMap.get(file);
     if (!rawFile) {
-      return true; // Can't check, assume ready
+      return; // Can't prioritize, skip
     }
 
     // Access private _torrent property for piece information
-    const torrent = (rawFile as any)._torrent;
+    const extendedFile = isExtendedTorrentFile(rawFile) ? rawFile : null;
+    const torrent = extendedFile?._torrent;
     if (!torrent) {
-      return false;
+      return;
     }
 
     const pieceLength = torrent.pieceLength || 0;
     if (pieceLength === 0) {
-      return true; // Can't check, assume ready
+      return; // Can't calculate pieces, skip
     }
 
     const startPiece = Math.floor(start / pieceLength);
     const endPiece = Math.floor(end / pieceLength);
-    const totalPieces = endPiece - startPiece + 1;
 
-    // Check current availability
-    const checkAvailability = (): number => {
-      if (!torrent.pieces) {
-        return 0;
-      }
-      return torrent.pieces
-        .slice(startPiece, endPiece + 1)
-        .filter((p: boolean) => p).length;
-    };
-
-    let piecesAvailable = checkAvailability();
-
-    // If all pieces are available, return immediately
-    if (piecesAvailable >= totalPieces) {
-      return true;
-    }
-
-    this.logger.info(
-      `[${fileName}] Waiting for pieces ${startPiece}-${endPiece} (${piecesAvailable}/${totalPieces} available)...`
-    );
-
-    // Prioritize downloading these pieces
+    // Prioritize downloading these pieces (but don't wait)
     if (torrent.select && typeof torrent.select === 'function') {
-      for (let i = startPiece; i <= endPiece; i++) {
-        try {
-          torrent.select(i, true); // Prioritize piece
-        } catch (err) {
-          // Ignore errors if piece selection fails
-        }
+      try {
+        // Select the entire range of pieces with high priority
+        // WebTorrent select API: select(start, end, priority?, notify?)
+        // Priority: 1 = high priority, 0 = normal priority
+        torrent.select(startPiece, endPiece, 1);
+        this.logger.debug(`[${fileName}] Prioritized pieces ${startPiece}-${endPiece} for range ${start}-${end}`);
+      } catch (err) {
+        // Ignore errors - prioritization is best-effort
+        this.logger.debug(`[${fileName}] Failed to prioritize pieces ${startPiece}-${endPiece}:`, err);
       }
     }
-
-    // Wait for pieces to load with timeout (max 30 seconds)
-    const maxWaitTime = 30000; // 30 seconds
-    const checkInterval = 100; // Check every 100ms
-    const startTime = Date.now();
-
-    return new Promise<boolean>((resolve) => {
-      const checkIntervalId = setInterval(() => {
-        piecesAvailable = checkAvailability();
-
-        if (piecesAvailable >= totalPieces) {
-          clearInterval(checkIntervalId);
-          this.logger.info(`[${fileName}] All pieces ${startPiece}-${endPiece} are now available`);
-          resolve(true);
-          return;
-        }
-
-        // Timeout check
-        if (Date.now() - startTime > maxWaitTime) {
-          clearInterval(checkIntervalId);
-          this.logger.warn(
-            `[${fileName}] Timeout waiting for pieces ${startPiece}-${endPiece} (${piecesAvailable}/${totalPieces} available after ${maxWaitTime}ms)`
-          );
-          resolve(false);
-          return;
-        }
-      }, checkInterval);
-
-      // Also listen to torrent 'download' event for faster response
-      const onDownload = (): void => {
-        piecesAvailable = checkAvailability();
-        if (piecesAvailable >= totalPieces) {
-          torrent.off('download', onDownload);
-          clearInterval(checkIntervalId);
-          this.logger.info(`[${fileName}] All pieces ${startPiece}-${endPiece} are now available (via download event)`);
-          resolve(true);
-        }
-      };
-
-      torrent.on('download', onDownload);
-
-      // Cleanup on timeout
-      setTimeout(() => {
-        torrent.off('download', onDownload);
-      }, maxWaitTime);
-    });
   }
 
   /**
@@ -284,9 +243,11 @@ export class WebTorrentStreamService implements IStreamService {
 
     // Client disconnect handling
     const cleanup = (): void => {
-      if (stream && !(stream as any).destroyed) {
+      // Check if stream has destroy method (NodeJS.ReadableStream may have it)
+      const streamWithDestroy = stream as NodeJS.ReadableStream & { destroyed?: boolean; destroy?: () => void };
+      if (stream && !streamWithDestroy.destroyed && typeof streamWithDestroy.destroy === 'function') {
         this.logger.info(`[${fileName}] Connection closed by client, chunk ${start}-${end} interrupted`);
-        (stream as any).destroy();
+        streamWithDestroy.destroy();
       }
     };
 

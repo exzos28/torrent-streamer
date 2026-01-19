@@ -57,7 +57,7 @@ class GlobalMemoryTracker {
 
     removeChunk(storeId: string, index: number): void {
         const storeChunks = this.chunks.get(storeId);
-        if (!storeChunks) {return;}
+        if (!storeChunks) { return; }
 
         const chunkIndex = storeChunks.findIndex((c) => c.index === index);
         if (chunkIndex !== -1) {
@@ -69,7 +69,7 @@ class GlobalMemoryTracker {
 
     accessChunk(storeId: string, index: number): void {
         const storeChunks = this.chunks.get(storeId);
-        if (!storeChunks) {return;}
+        if (!storeChunks) { return; }
 
         const chunk = storeChunks.find((c) => c.index === index);
         if (chunk) {
@@ -102,7 +102,7 @@ class GlobalMemoryTracker {
                 }
             }
 
-            if (!oldestChunk) {break;}
+            if (!oldestChunk) { break; }
 
             // Remove oldest chunk
             const storeChunks = this.chunks.get(oldestChunk.storeId);
@@ -172,16 +172,29 @@ export class MemoryLimitedStore {
                 // If error, remove from tracker
                 this.tracker.removeChunk(this.storeId, index);
             }
-            if (cb) {cb(err);}
+            if (cb) { cb(err); }
         });
     }
 
-    get(index: number, opts: any, cb?: (err: Error | null, buf?: Buffer) => void): void {
+    get(index: number, opts?: any, cb?: (err: Error | null, buf?: Buffer) => void): void {
+        // Handle different call signatures
+        let callback: ((err: Error | null, buf?: Buffer) => void) | undefined;
+
+        if (typeof opts === 'function') {
+            // Called as: get(index, callback)
+            callback = opts;
+        } else if (typeof cb === 'function') {
+            // Called as: get(index, opts, callback)
+            callback = cb;
+        }
+
         // Check if chunk was evicted
         if (this.evictedChunks.has(index)) {
             const err = new Error('Chunk not found') as Error & { notFound?: boolean };
             err.notFound = true;
-            if (cb) {cb(err);}
+            if (callback) {
+                callback(err);
+            }
             return;
         }
 
@@ -192,7 +205,7 @@ export class MemoryLimitedStore {
         if (typeof opts === 'function') {
             this.store.get(index, opts);
         } else {
-            this.store.get(index, opts, cb);
+            this.store.get(index, opts, callback);
         }
     }
 
@@ -220,7 +233,7 @@ export class MemoryLimitedStore {
 
         let freed = 0;
         for (const { storeId, chunk } of allChunks) {
-            if (freed >= requiredSize) {break;}
+            if (freed >= requiredSize) { break; }
 
             // Mark as evicted if it's from this store
             if (storeId === this.storeId) {

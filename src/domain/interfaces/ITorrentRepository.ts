@@ -52,6 +52,12 @@ export interface ITorrentRepository {
    * @returns Promise that resolves when cleanup is complete
    */
   destroy(): Promise<void>;
+
+  /**
+   * Gets debug information about all torrents including pieces status
+   * @returns Array of debug info for each torrent
+   */
+  getDebugInfo(): TorrentDebugInfo[];
 }
 
 export interface DetailedTorrentInfo {
@@ -69,4 +75,24 @@ export interface FileInfo {
   name: string;
   length: number;
   isVideo: boolean;
+}
+
+export interface TorrentDebugInfo {
+  magnet: string;
+  infoHash: string;
+  name: string;
+  progress: number;
+  downloadSpeed: number;
+  uploadSpeed: number;
+  numPeers: number;
+  ready: boolean;
+  pieceLength: number;
+  totalPieces: number;
+  pieces: number[]; // Array of 0/1 indicating which pieces are downloaded
+  prioritizedPieces: number[]; // Array of 0/1 indicating which pieces are prioritized (selected)
+  files: Array<{
+    name: string;
+    length: number;
+    isVideo: boolean;
+  }>;
 }

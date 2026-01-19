@@ -1,13 +1,15 @@
 import { Router } from 'express';
 import { StreamController } from '../controllers/StreamController';
 import { TorrentController } from '../controllers/TorrentController';
+import { DebugController } from '../controllers/DebugController';
 
 /**
  * Creates and configures stream routes
  */
 export function createStreamRoutes(
   streamController: StreamController,
-  torrentController: TorrentController
+  torrentController: TorrentController,
+  debugController: DebugController
 ): Router {
   const router = Router();
 
@@ -25,6 +27,10 @@ export function createStreamRoutes(
 
   // Remove torrent endpoint
   router.delete('/torrent', (req, res) => torrentController.remove(req, res));
+
+  // Debug endpoints
+  router.get('/debug/torrents', (req, res) => debugController.getTorrentsDebugInfo(req, res));
+  router.get('/debug/torrents.svg', (req, res) => debugController.getTorrentsSVG(req, res));
 
   return router;
 }
