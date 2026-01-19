@@ -5,6 +5,9 @@ import { WebTorrentRepository } from '../../infrastructure/torrent/WebTorrentRep
 import { WebTorrentStreamService } from '../../infrastructure/streaming/WebTorrentStreamService';
 import { StreamVideoUseCase } from '../../application/use-cases/StreamVideoUseCase';
 import { GetTorrentInfoUseCase } from '../../application/use-cases/GetTorrentInfoUseCase';
+import { AddTorrentUseCase } from '../../application/use-cases/AddTorrentUseCase';
+import { RemoveTorrentUseCase } from '../../application/use-cases/RemoveTorrentUseCase';
+import { ListTorrentsUseCase } from '../../application/use-cases/ListTorrentsUseCase';
 import { StreamController } from './controllers/StreamController';
 import { TorrentController } from './controllers/TorrentController';
 import { createStreamRoutes } from './routes/stream.routes';
@@ -27,10 +30,18 @@ export function createApp(
     // Initialize use cases
     const streamVideoUseCase = new StreamVideoUseCase(repo, appLogger);
     const getTorrentInfoUseCase = new GetTorrentInfoUseCase(repo);
+    const addTorrentUseCase = new AddTorrentUseCase(repo, appLogger);
+    const removeTorrentUseCase = new RemoveTorrentUseCase(repo, appLogger);
+    const listTorrentsUseCase = new ListTorrentsUseCase(repo);
 
     // Initialize controllers
     const streamController = new StreamController(streamVideoUseCase, service, repo);
-    const torrentController = new TorrentController(getTorrentInfoUseCase, repo);
+    const torrentController = new TorrentController(
+        getTorrentInfoUseCase,
+        addTorrentUseCase,
+        removeTorrentUseCase,
+        listTorrentsUseCase
+    );
 
     // Initialize Express app
     const app: Express = express();

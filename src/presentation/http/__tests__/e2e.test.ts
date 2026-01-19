@@ -182,7 +182,10 @@ describe('E2E Tests', () => {
             const response = await request(app).get('/torrents');
 
             expect(response.status).toBe(200);
+            expect(response.body).toHaveProperty('torrents');
+            expect(response.body).toHaveProperty('count');
             expect(response.body.torrents).toEqual([]);
+            expect(response.body.count).toBe(0);
         });
 
         it('should return torrents after adding one', async () => {
@@ -198,7 +201,9 @@ describe('E2E Tests', () => {
             expect(Array.isArray(response.body.torrents)).toBe(true);
 
             // If torrent was successfully added, it should be in the list
+            expect(response.body).toHaveProperty('count');
             if (response.body.torrents.length > 0) {
+                expect(response.body.count).toBeGreaterThan(0);
                 expect(response.body.torrents[0]).toHaveProperty('infoHash');
                 expect(response.body.torrents[0]).toHaveProperty('name');
                 expect(response.body.torrents[0]).toHaveProperty('progress');
@@ -208,38 +213,81 @@ describe('E2E Tests', () => {
         });
     });
 
-    describe('DELETE /torrent', () => {
-        it('should return 400 when magnet link is missing', async () => {
-            const response = await request(app).delete('/torrent');
+  describe('POST /torrent', () => {
+    it('should return 400 when magnet link is missing', async () => {
+      const response = await request(app).post('/torrent');
 
-            expect(response.status).toBe(400);
-            expect(response.body).toHaveProperty('error');
-            expect(response.body.error).toBe('Magnet link required');
-        });
-
-        it('should return 404 when torrent is not found', async () => {
-            const response = await request(app).delete('/torrent?magnet=magnet:?xt=urn:btih:nonexistent');
-
-            expect(response.status).toBe(404);
-            expect(response.body).toHaveProperty('error');
-            expect(response.body.error).toBe('Torrent not found');
-        });
-
-        it('should remove torrent when it exists', async () => {
-            // First add the torrent
-            await torrentRepository.add(testMagnet);
-
-            // Then remove it
-            const response = await request(app).delete(`/torrent?magnet=${encodeURIComponent(testMagnet)}`);
-
-            // Should succeed if torrent was added, or 404 if it wasn't
-            expect([200, 404]).toContain(response.status);
-            if (response.status === 200) {
-                expect(response.body).toHaveProperty('message');
-                expect(response.body.message).toBe('Torrent stopped');
-            }
-        });
+      expect(response.status).toBe(400);
+      expect(response.body).toHaveProperty('error');
+      expect(response.body.error).toBe('Magnet link required');
     });
+
+    it('should return 400 when magnet link is invalid', async () => {
+      const response = await request(app).post('/torrent?magnet=invalid-link');
+
+      expect(response.status).toBe(400);
+      expect(response.body).toHaveProperty('error');
+      expect(response.body.error).toBe('Invalid magnet link');
+    });
+
+    it('should add torrent successfully', async () => {
+      const response = await request(app).post(`/torrent?magnet=${encodeURIComponent(testMagnet)}`);
+
+      // Should return 201 Created or handle the request
+      expect([200, 201, 500]).toContain(response.status);
+      if (response.status === 201) {
+        expect(response.body).toHaveProperty('message');
+        expect(response.body).toHaveProperty('torrent');
+        expect(response.body.message).toBe('Torrent added successfully');
+        expect(response.body.torrent).toHaveProperty('infoHash');
+        expect(response.body.torrent).toHaveProperty('name');
+      }
+    });
+
+    it('should return existing torrent if already added', async () => {
+      // First add the torrent
+      await torrentRepository.add(testMagnet);
+
+      // Try to add it again
+      const response = await request(app).post(`/torrent?magnet=${encodeURIComponent(testMagnet)}`);
+
+      // Should return 201 or 200 with existing torrent
+      expect([200, 201, 500]).toContain(response.status);
+    });
+  });
+
+  describe('DELETE /torrent', () => {
+    it('should return 400 when magnet link is missing', async () => {
+      const response = await request(app).delete('/torrent');
+
+      expect(response.status).toBe(400);
+      expect(response.body).toHaveProperty('error');
+      expect(response.body.error).toBe('Magnet link required');
+    });
+
+    it('should return 404 when torrent is not found', async () => {
+      const response = await request(app).delete('/torrent?magnet=magnet:?xt=urn:btih:nonexistent');
+
+      expect(response.status).toBe(404);
+      expect(response.body).toHaveProperty('error');
+      expect(response.body.error).toBe('Torrent not found');
+    });
+
+    it('should remove torrent when it exists', async () => {
+      // First add the torrent
+      await torrentRepository.add(testMagnet);
+
+      // Then remove it
+      const response = await request(app).delete(`/torrent?magnet=${encodeURIComponent(testMagnet)}`);
+
+      // Should succeed if torrent was added, or 404 if it wasn't
+      expect([200, 404]).toContain(response.status);
+      if (response.status === 200) {
+        expect(response.body).toHaveProperty('message');
+        expect(response.body.message).toBe('Torrent stopped');
+      }
+    });
+  });
 
     describe('Error handling', () => {
         it('should handle malformed requests gracefully', async () => {

@@ -1,6 +1,8 @@
 import { Request, Response } from 'express';
 import { GetTorrentInfoUseCase } from '../../../application/use-cases/GetTorrentInfoUseCase';
-import { ITorrentRepository } from '../../../domain/interfaces/ITorrentRepository';
+import { AddTorrentUseCase } from '../../../application/use-cases/AddTorrentUseCase';
+import { RemoveTorrentUseCase } from '../../../application/use-cases/RemoveTorrentUseCase';
+import { ListTorrentsUseCase } from '../../../application/use-cases/ListTorrentsUseCase';
 
 /**
  * Controller for handling torrent-related HTTP requests
@@ -8,7 +10,9 @@ import { ITorrentRepository } from '../../../domain/interfaces/ITorrentRepositor
 export class TorrentController {
     constructor(
         private getTorrentInfoUseCase: GetTorrentInfoUseCase,
-        private torrentRepository: ITorrentRepository
+        private addTorrentUseCase: AddTorrentUseCase,
+        private removeTorrentUseCase: RemoveTorrentUseCase,
+        private listTorrentsUseCase: ListTorrentsUseCase
     ) { }
 
     /**
@@ -38,8 +42,8 @@ export class TorrentController {
      * Handles GET /torrents
      */
     getAll(_req: Request, res: Response): void {
-        const torrents = this.torrentRepository.getAll();
-        res.json({ torrents });
+        const result = this.listTorrentsUseCase.execute({});
+        res.json({ torrents: result.torrents, count: result.count });
     }
 
     /**
@@ -53,12 +57,40 @@ export class TorrentController {
             return;
         }
 
-        const removed = this.torrentRepository.remove(magnet);
+        const result = this.removeTorrentUseCase.execute({ magnet });
 
-        if (removed) {
-            res.json({ message: 'Torrent stopped' });
+        if (result.success) {
+            res.json({ message: result.message });
         } else {
-            res.status(404).json({ error: 'Torrent not found' });
+            res.status(result.error === 'Magnet link required' ? 400 : 404).json({
+                error: result.error
+            });
+        }
+    }
+
+    /**
+     * Handles POST /torrent?magnet=...
+     * Adds a new torrent
+     */
+    async add(req: Request, res: Response): Promise<void> {
+        const magnet = typeof req.query.magnet === 'string' ? req.query.magnet : undefined;
+
+        if (!magnet) {
+            res.status(400).json({ error: 'Magnet link required' });
+            return;
+        }
+
+        const result = await this.addTorrentUseCase.execute({ magnet });
+
+        if (result.success && result.torrent) {
+            res.status(201).json({
+                message: 'Torrent added successfully',
+                torrent: result.torrent
+            });
+        } else {
+            res.status(result.error === 'Invalid magnet link' ? 400 : 500).json({
+                error: result.error || 'Failed to add torrent'
+            });
         }
     }
 }

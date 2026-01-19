@@ -20,6 +20,9 @@ export function createStreamRoutes(
   // List all torrents endpoint
   router.get('/torrents', (req, res) => torrentController.getAll(req, res));
 
+  // Add torrent endpoint
+  router.post('/torrent', (req, res) => torrentController.add(req, res));
+
   // Remove torrent endpoint
   router.delete('/torrent', (req, res) => torrentController.remove(req, res));
 
