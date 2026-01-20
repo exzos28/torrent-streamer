@@ -62,7 +62,7 @@ describe('WebTorrentRepository.getDebugInfo', () => {
         const mockTorrent = createMockTorrent(pieces);
 
         (repository as any).activeTorrents.set('magnet:test', mockTorrent);
-        const wrapper = new TorrentWrapper(mockTorrent);
+        const wrapper = new TorrentWrapper(mockTorrent, mockLogger);
         (repository as any).torrentWrappers.set('magnet:test', wrapper);
 
         const debugInfo = repository.getDebugInfo();
@@ -88,7 +88,7 @@ describe('WebTorrentRepository.getDebugInfo', () => {
         const mockTorrent = createMockTorrent(pieces);
 
         (repository as any).activeTorrents.set('magnet:test', mockTorrent);
-        const wrapper = new TorrentWrapper(mockTorrent);
+        const wrapper = new TorrentWrapper(mockTorrent, mockLogger);
         (repository as any).torrentWrappers.set('magnet:test', wrapper);
 
         const debugInfo = repository.getDebugInfo();
@@ -110,7 +110,7 @@ describe('WebTorrentRepository.getDebugInfo', () => {
         const mockTorrent = createMockTorrent(pieces);
 
         (repository as any).activeTorrents.set('magnet:test', mockTorrent);
-        const wrapper = new TorrentWrapper(mockTorrent);
+        const wrapper = new TorrentWrapper(mockTorrent, mockLogger);
         (repository as any).torrentWrappers.set('magnet:test', wrapper);
 
         // Prioritize pieces 5-15 (downloaded) and 30-40 (downloaded) and 60-70 (not downloaded)
@@ -130,7 +130,7 @@ describe('WebTorrentRepository.getDebugInfo', () => {
         const mockTorrent = createMockTorrent(pieces);
 
         (repository as any).activeTorrents.set('magnet:test', mockTorrent);
-        const wrapper = new TorrentWrapper(mockTorrent);
+        const wrapper = new TorrentWrapper(mockTorrent, mockLogger);
         (repository as any).torrentWrappers.set('magnet:test', wrapper);
 
         const debugInfo = repository.getDebugInfo();
@@ -148,7 +148,7 @@ describe('WebTorrentRepository.getDebugInfo', () => {
         mockTorrent.ready = false;
 
         (repository as any).activeTorrents.set('magnet:test', mockTorrent);
-        const wrapper = new TorrentWrapper(mockTorrent);
+        const wrapper = new TorrentWrapper(mockTorrent, mockLogger);
         (repository as any).torrentWrappers.set('magnet:test', wrapper);
 
         const debugInfo = repository.getDebugInfo();
@@ -166,7 +166,7 @@ describe('WebTorrentRepository.getDebugInfo', () => {
         mockTorrent.numPeers = 0;
 
         (repository as any).activeTorrents.set('magnet:test', mockTorrent);
-        const wrapper = new TorrentWrapper(mockTorrent);
+        const wrapper = new TorrentWrapper(mockTorrent, mockLogger);
         (repository as any).torrentWrappers.set('magnet:test', wrapper);
 
         const debugInfo = repository.getDebugInfo();
