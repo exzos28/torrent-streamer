@@ -97,20 +97,32 @@ describe('WebTorrentRepository.getDebugInfo', () => {
     });
 
     it('should calculate prioritizedRanges correctly', () => {
-        const pieces = Array(100).fill({ length: 16384, missing: 0 }); // All downloaded
+        // Create pieces where some are downloaded and some are not
+        const pieces: Array<{ length: number; missing: number } | null> = [];
+        for (let i = 0; i < 100; i++) {
+            // Pieces 0-49: downloaded, pieces 50-99: not downloaded
+            if (i < 50) {
+                pieces.push({ length: 16384, missing: 0 });
+            } else {
+                pieces.push(null);
+            }
+        }
         const mockTorrent = createMockTorrent(pieces);
 
         (repository as any).activeTorrents.set('magnet:test', mockTorrent);
         const wrapper = new TorrentWrapper(mockTorrent);
         (repository as any).torrentWrappers.set('magnet:test', wrapper);
 
-        // Prioritize pieces 5-15 and 30-40
+        // Prioritize pieces 5-15 (downloaded) and 30-40 (downloaded) and 60-70 (not downloaded)
         wrapper.select(5, 15, 1);
         wrapper.select(30, 40, 1);
+        wrapper.select(60, 70, 1);
 
         const debugInfo = repository.getDebugInfo();
 
-        expect(debugInfo[0].prioritizedRanges).toEqual([[5, 15], [30, 40]]);
+        // After cleanup, only non-downloaded prioritized pieces should remain
+        // So only 60-70 should be in prioritizedRanges
+        expect(debugInfo[0].prioritizedRanges).toEqual([[60, 70]]);
     });
 
     it('should handle empty prioritized ranges', () => {

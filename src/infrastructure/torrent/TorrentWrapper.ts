@@ -102,6 +102,31 @@ export class TorrentWrapper {
   }
 
   /**
+   * Remove pieces from prioritized tracking if they are already downloaded
+   * This helps keep prioritizedPieces clean and accurate
+   */
+  cleanupDownloadedPieces(): void {
+    if (!this.torrent.pieces || !Array.isArray(this.torrent.pieces)) {
+      return;
+    }
+
+    // Remove pieces that are already downloaded from prioritized tracking
+    // They don't need to be prioritized anymore
+    for (const pieceIndex of this.prioritizedPieces.keys()) {
+      if (pieceIndex >= 0 && pieceIndex < this.torrent.pieces.length) {
+        const piece = this.torrent.pieces[pieceIndex];
+        // If piece is downloaded (not null and missing === 0), remove from prioritized
+        if (piece !== null && typeof piece === 'object' && 'missing' in piece) {
+          const pieceObj = piece as { missing?: number };
+          if (pieceObj.missing === 0) {
+            this.prioritizedPieces.delete(pieceIndex);
+          }
+        }
+      }
+    }
+  }
+
+  /**
    * Deselect pieces (wraps original deselect method)
    * Removes tracking for deselected pieces
    */

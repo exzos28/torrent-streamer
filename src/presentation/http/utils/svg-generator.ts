@@ -47,7 +47,7 @@ export function generateTorrentsSVG(
     const useTwoRows = itemsPerRow < 4; // 4 legend items
     const legendRows = useTwoRows ? 2 : 1;
     const legendHeight = torrents.length > 0 ? (opts.fontSize + 5) * legendRows + 10 : 0; // Add space for legend if there are torrents
-    const torrentHeight = opts.barHeight + opts.pieceBarHeight + opts.spacing + opts.fontSize * 3 + 15;
+    const torrentHeight = opts.pieceBarHeight + opts.spacing + opts.fontSize * 3 + 15; // Removed barHeight since we removed progress bar
     const minHeight = padding * 2 + opts.fontSize * 2; // Minimum height for "No active torrents" message
     const totalHeight = Math.max(minHeight, padding * 2 + legendHeight + torrents.length * torrentHeight);
 
@@ -79,7 +79,7 @@ export function generateTorrentsSVG(
     const legendSquareSize = 10;
     const legendSpacing = 5;
     const legendLineHeight = opts.fontSize + 5;
-    
+
     // Legend items - arrange in 2 rows if needed
     const legendItems = [
         { class: 'piece-missing', label: 'Not downloaded' },
@@ -87,34 +87,34 @@ export function generateTorrentsSVG(
         { class: 'piece-prioritized', label: 'Prioritized' },
         { class: 'piece-prioritized-downloaded', label: 'Downloaded + Priority' }
     ];
-    
+
     // Use already calculated values for legend layout
     const legendItemsPerRow = Math.floor(availableWidth / 150); // ~150px per item
     const legendUseTwoRows = legendItemsPerRow < legendItems.length;
-    
+
     svg += `  <text x="${legendX}" y="${legendY}" class="legend" font-weight="bold">Legend:</text>\n`;
-    
+
     let legendItemX = legendX + 60;
     let legendItemY = legendY;
     let itemsInCurrentRow = 0;
-    
+
     for (let i = 0; i < legendItems.length; i++) {
         const item = legendItems[i];
-        
+
         // Move to second row if needed
         if (legendUseTwoRows && itemsInCurrentRow >= legendItemsPerRow && i > 0) {
             legendItemX = legendX + 60;
             legendItemY += legendLineHeight;
             itemsInCurrentRow = 0;
         }
-        
+
         svg += `  <rect x="${legendItemX}" y="${legendItemY - legendSquareSize}" width="${legendSquareSize}" height="${legendSquareSize}" class="${item.class}" />\n`;
         svg += `  <text x="${legendItemX + legendSquareSize + legendSpacing}" y="${legendItemY}" class="legend">${escapeXml(item.label)}</text>\n`;
-        
+
         legendItemX += 150; // Move to next item position
         itemsInCurrentRow++;
     }
-    
+
     // Update currentY based on legend height (use already calculated legendRows)
     currentY += legendRows * legendLineHeight + 5;
 
@@ -122,11 +122,11 @@ export function generateTorrentsSVG(
         const x = padding;
         const progress = torrent.progress;
         const progressWidth = opts.width - padding * 2;
-        const progressFillWidth = progressWidth * progress;
 
         // Torrent name and info
         const nameY = currentY + opts.fontSize;
-        svg += `  <text x="${x}" y="${nameY}" class="title">${escapeXml(torrent.name)}</text>\n`;
+        const torrentName = torrent.name || 'Unknown torrent';
+        svg += `  <text x="${x}" y="${nameY}" class="title">${escapeXml(torrentName)}</text>\n`;
 
         const infoY = nameY + opts.fontSize + 5;
         const infoText = `${(progress * 100).toFixed(1)}% | ${formatBytes(torrent.downloadSpeed)}/s | ${torrent.numPeers} peers`;
@@ -157,19 +157,15 @@ export function generateTorrentsSVG(
             svg += `  <text x="${x}" y="${piecesStatsY}" class="info">${escapeXml(piecesStatsText)}</text>\n`;
         }
 
-        // Progress bar
-        const barY = piecesStatsY + opts.fontSize + 5;
-        svg += `  <rect x="${x}" y="${barY}" width="${progressWidth}" height="${opts.barHeight}" class="progress-bg" rx="4"/>\n`;
-        svg += `  <rect x="${x}" y="${barY}" width="${progressFillWidth}" height="${opts.barHeight}" class="progress-fill" rx="4"/>\n`;
-
-        // Pieces visualization - shows all states in one row:
+        // Pieces visualization - shows all states in one detailed row:
         // - Light gray: not downloaded, not prioritized
         // - Blue: downloaded, not prioritized
         // - Orange: not downloaded, prioritized
         // - Dark orange/red: downloaded and prioritized
         if (torrent.totalPieces > 0 && torrent.pieces && Array.isArray(torrent.pieces) && torrent.pieces.length > 0) {
-            const pieceBarY = barY + opts.barHeight + 5;
-            const maxPiecesToShow = Math.min(torrent.totalPieces, 400); // Increased limit for better detail
+            const pieceBarY = piecesStatsY + opts.fontSize + 5;
+            // Show all pieces for maximum detail (no limit, but use step if too many)
+            const maxPiecesToShow = Math.min(torrent.totalPieces, 2000); // Very high limit for detail
             const pieceStep = Math.max(1, Math.ceil(torrent.totalPieces / maxPiecesToShow));
             const displayedWidth = progressWidth;
             const piecesCount = Math.min(torrent.totalPieces, torrent.pieces.length);
@@ -181,15 +177,15 @@ export function generateTorrentsSVG(
                     const pieceX = x + pieceRatio * displayedWidth;
                     const pieceW = Math.max(0.5, (pieceStep / piecesCount) * displayedWidth);
                     const pieceIndex = Math.floor(i);
-                    
+
                     // Get piece status
                     const pieceValue = pieceIndex < torrent.pieces.length ? torrent.pieces[pieceIndex] : 0;
                     // Handle both number (0/1) and boolean values
                     const isDownloaded = pieceValue === 1 || (typeof pieceValue === 'boolean' && pieceValue === true);
-                    
+
                     // Get prioritized status
-                    const prioritizedValue = torrent.prioritizedPieces && pieceIndex < torrent.prioritizedPieces.length 
-                        ? torrent.prioritizedPieces[pieceIndex] 
+                    const prioritizedValue = torrent.prioritizedPieces && pieceIndex < torrent.prioritizedPieces.length
+                        ? torrent.prioritizedPieces[pieceIndex]
                         : 0;
                     const isPrioritized = prioritizedValue === 1 || (typeof prioritizedValue === 'boolean' && prioritizedValue === true);
 
@@ -240,8 +236,11 @@ function formatBytes(bytes: number): string {
 /**
  * Escapes XML special characters
  */
-function escapeXml(text: string): string {
-    return text
+function escapeXml(text: string | undefined | null): string {
+    if (!text) {
+        return '';
+    }
+    return String(text)
         .replace(/&/g, '&amp;')
         .replace(/</g, '&lt;')
         .replace(/>/g, '&gt;')

@@ -351,6 +351,8 @@ export class WebTorrentRepository implements ITorrentRepository {
             let prioritizedPieces: number[] = new Array(totalPieces).fill(0);
             const wrapper = this.torrentWrappers.get(magnet);
             if (wrapper) {
+                // Cleanup downloaded pieces from prioritized tracking before getting array
+                wrapper.cleanupDownloadedPieces();
                 prioritizedPieces = wrapper.getPrioritizedPiecesArray(totalPieces);
             }
 
