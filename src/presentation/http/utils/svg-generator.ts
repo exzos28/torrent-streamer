@@ -41,22 +41,28 @@ export function generateTorrentsSVG(
     let currentY = padding;
 
     // Calculate total height - ensure minimum height for empty state
-    // Height includes: name, info, pieces stats, progress bar, pieces bar (downloaded), prioritized pieces bar, spacing
-    const torrentHeight = opts.barHeight + opts.pieceBarHeight * 1.5 + opts.spacing + opts.fontSize * 3 + 15;
+    // Height includes: legend (1-2 rows), name, info, pieces stats, progress bar, pieces bar, spacing
+    const availableWidth = (options.width && !isNaN(options.width) ? options.width : DEFAULT_OPTIONS.width) - padding * 2;
+    const itemsPerRow = Math.floor(availableWidth / 150);
+    const useTwoRows = itemsPerRow < 4; // 4 legend items
+    const legendRows = useTwoRows ? 2 : 1;
+    const legendHeight = torrents.length > 0 ? (opts.fontSize + 5) * legendRows + 10 : 0; // Add space for legend if there are torrents
+    const torrentHeight = opts.barHeight + opts.pieceBarHeight + opts.spacing + opts.fontSize * 3 + 15;
     const minHeight = padding * 2 + opts.fontSize * 2; // Minimum height for "No active torrents" message
-    const totalHeight = Math.max(minHeight, padding * 2 + torrents.length * torrentHeight);
+    const totalHeight = Math.max(minHeight, padding * 2 + legendHeight + torrents.length * torrentHeight);
 
     let svg = `<svg width="${opts.width}" height="${totalHeight}" xmlns="http://www.w3.org/2000/svg">\n`;
     svg += `             <style>
              .title { font-family: monospace; font-size: ${opts.fontSize + 2}px; font-weight: bold; fill: #333; }
              .info { font-family: monospace; font-size: ${opts.fontSize}px; fill: #666; }
+             .legend { font-family: monospace; font-size: ${opts.fontSize - 1}px; fill: #555; }
              .progress-bg { fill: #e0e0e0; }
              .progress-fill { fill: #4caf50; }
              .piece-bg { fill: #f5f5f5; }
-             .piece-downloaded { fill: #2196f3; }
-             .piece-missing { fill: #ffebee; }
-             .piece-prioritized { fill: #ff9800; }
-             .piece-prioritized-downloaded { fill: #ff5722; }
+             .piece-downloaded { fill: #2196f3; } /* Blue - downloaded, not prioritized */
+             .piece-missing { fill: #f5f5f5; } /* Light gray - not downloaded, not prioritized */
+             .piece-prioritized { fill: #ff9800; } /* Orange - not downloaded, prioritized */
+             .piece-prioritized-downloaded { fill: #ff5722; } /* Dark orange/red - downloaded and prioritized */
            </style>\n`;
 
     if (torrents.length === 0) {
@@ -66,6 +72,51 @@ export function generateTorrentsSVG(
         svg += `</svg>`;
         return svg;
     }
+
+    // Add legend at the top
+    const legendY = currentY + opts.fontSize;
+    const legendX = padding;
+    const legendSquareSize = 10;
+    const legendSpacing = 5;
+    const legendLineHeight = opts.fontSize + 5;
+    
+    // Legend items - arrange in 2 rows if needed
+    const legendItems = [
+        { class: 'piece-missing', label: 'Not downloaded' },
+        { class: 'piece-downloaded', label: 'Downloaded' },
+        { class: 'piece-prioritized', label: 'Prioritized' },
+        { class: 'piece-prioritized-downloaded', label: 'Downloaded + Priority' }
+    ];
+    
+    // Use already calculated values for legend layout
+    const legendItemsPerRow = Math.floor(availableWidth / 150); // ~150px per item
+    const legendUseTwoRows = legendItemsPerRow < legendItems.length;
+    
+    svg += `  <text x="${legendX}" y="${legendY}" class="legend" font-weight="bold">Legend:</text>\n`;
+    
+    let legendItemX = legendX + 60;
+    let legendItemY = legendY;
+    let itemsInCurrentRow = 0;
+    
+    for (let i = 0; i < legendItems.length; i++) {
+        const item = legendItems[i];
+        
+        // Move to second row if needed
+        if (legendUseTwoRows && itemsInCurrentRow >= legendItemsPerRow && i > 0) {
+            legendItemX = legendX + 60;
+            legendItemY += legendLineHeight;
+            itemsInCurrentRow = 0;
+        }
+        
+        svg += `  <rect x="${legendItemX}" y="${legendItemY - legendSquareSize}" width="${legendSquareSize}" height="${legendSquareSize}" class="${item.class}" />\n`;
+        svg += `  <text x="${legendItemX + legendSquareSize + legendSpacing}" y="${legendItemY}" class="legend">${escapeXml(item.label)}</text>\n`;
+        
+        legendItemX += 150; // Move to next item position
+        itemsInCurrentRow++;
+    }
+    
+    // Update currentY based on legend height (use already calculated legendRows)
+    currentY += legendRows * legendLineHeight + 5;
 
     for (const torrent of torrents) {
         const x = padding;
@@ -111,10 +162,14 @@ export function generateTorrentsSVG(
         svg += `  <rect x="${x}" y="${barY}" width="${progressWidth}" height="${opts.barHeight}" class="progress-bg" rx="4"/>\n`;
         svg += `  <rect x="${x}" y="${barY}" width="${progressFillWidth}" height="${opts.barHeight}" class="progress-fill" rx="4"/>\n`;
 
-        // Pieces visualization (downloaded status)
+        // Pieces visualization - shows all states in one row:
+        // - Light gray: not downloaded, not prioritized
+        // - Blue: downloaded, not prioritized
+        // - Orange: not downloaded, prioritized
+        // - Dark orange/red: downloaded and prioritized
         if (torrent.totalPieces > 0 && torrent.pieces && Array.isArray(torrent.pieces) && torrent.pieces.length > 0) {
             const pieceBarY = barY + opts.barHeight + 5;
-            const maxPiecesToShow = Math.min(torrent.totalPieces, 200); // Limit to 200 pieces for readability
+            const maxPiecesToShow = Math.min(torrent.totalPieces, 400); // Increased limit for better detail
             const pieceStep = Math.max(1, Math.ceil(torrent.totalPieces / maxPiecesToShow));
             const displayedWidth = progressWidth;
             const piecesCount = Math.min(torrent.totalPieces, torrent.pieces.length);
@@ -126,11 +181,17 @@ export function generateTorrentsSVG(
                     const pieceX = x + pieceRatio * displayedWidth;
                     const pieceW = Math.max(0.5, (pieceStep / piecesCount) * displayedWidth);
                     const pieceIndex = Math.floor(i);
+                    
+                    // Get piece status
                     const pieceValue = pieceIndex < torrent.pieces.length ? torrent.pieces[pieceIndex] : 0;
                     // Handle both number (0/1) and boolean values
-                    // TypeScript sees pieceValue as number, but at runtime it might be boolean
                     const isDownloaded = pieceValue === 1 || (typeof pieceValue === 'boolean' && pieceValue === true);
-                    const isPrioritized = torrent.prioritizedPieces && pieceIndex < torrent.prioritizedPieces.length && torrent.prioritizedPieces[pieceIndex] === 1;
+                    
+                    // Get prioritized status
+                    const prioritizedValue = torrent.prioritizedPieces && pieceIndex < torrent.prioritizedPieces.length 
+                        ? torrent.prioritizedPieces[pieceIndex] 
+                        : 0;
+                    const isPrioritized = prioritizedValue === 1 || (typeof prioritizedValue === 'boolean' && prioritizedValue === true);
 
                     // Validate all values before adding to SVG
                     if (
@@ -141,44 +202,16 @@ export function generateTorrentsSVG(
                         pieceW > 0 &&
                         pieceBarY >= 0
                     ) {
-                        // Use different colors for prioritized pieces
-                        let pieceClass = 'piece-missing';
+                        // Determine piece class based on downloaded and prioritized status
+                        let pieceClass = 'piece-missing'; // Default: not downloaded, not prioritized
                         if (isDownloaded && isPrioritized) {
-                            pieceClass = 'piece-prioritized-downloaded';
+                            pieceClass = 'piece-prioritized-downloaded'; // Downloaded and prioritized
                         } else if (isDownloaded) {
-                            pieceClass = 'piece-downloaded';
+                            pieceClass = 'piece-downloaded'; // Downloaded, not prioritized
                         } else if (isPrioritized) {
-                            pieceClass = 'piece-prioritized';
+                            pieceClass = 'piece-prioritized'; // Not downloaded, but prioritized
                         }
                         svg += `  <rect x="${pieceX.toFixed(2)}" y="${pieceBarY}" width="${pieceW.toFixed(2)}" height="${opts.pieceBarHeight}" class="${pieceClass}" />\n`;
-                    }
-                }
-            }
-
-            // Prioritized pieces visualization (second row)
-            if (torrent.prioritizedPieces && Array.isArray(torrent.prioritizedPieces) && torrent.prioritizedPieces.length > 0) {
-                const prioritizedBarY = pieceBarY + opts.pieceBarHeight + 3;
-                const prioritizedCount = Math.min(torrent.totalPieces, torrent.prioritizedPieces.length);
-
-                if (prioritizedCount > 0 && displayedWidth > 0 && !isNaN(displayedWidth)) {
-                    for (let i = 0; i < prioritizedCount; i += pieceStep) {
-                        const pieceRatio = i / prioritizedCount;
-                        const pieceX = x + pieceRatio * displayedWidth;
-                        const pieceW = Math.max(0.5, (pieceStep / prioritizedCount) * displayedWidth);
-                        const pieceIndex = Math.floor(i);
-                        const isPrioritized = pieceIndex < torrent.prioritizedPieces.length && torrent.prioritizedPieces[pieceIndex] === 1;
-
-                        if (
-                            isPrioritized &&
-                            !isNaN(pieceX) &&
-                            !isNaN(pieceW) &&
-                            !isNaN(prioritizedBarY) &&
-                            pieceX >= 0 &&
-                            pieceW > 0 &&
-                            prioritizedBarY >= 0
-                        ) {
-                            svg += `  <rect x="${pieceX.toFixed(2)}" y="${prioritizedBarY}" width="${pieceW.toFixed(2)}" height="${opts.pieceBarHeight / 2}" class="piece-prioritized" />\n`;
-                        }
                     }
                 }
             }

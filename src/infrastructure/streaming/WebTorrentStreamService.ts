@@ -242,12 +242,25 @@ export class WebTorrentStreamService implements IStreamService {
     });
 
     // Client disconnect handling
+    let isCleanedUp = false;
     const cleanup = (): void => {
+      // Prevent multiple cleanup calls
+      if (isCleanedUp) {
+        return;
+      }
+      isCleanedUp = true;
+
       // Check if stream has destroy method (NodeJS.ReadableStream may have it)
+      // Use type guard pattern instead of type assertion
       const streamWithDestroy = stream as NodeJS.ReadableStream & { destroyed?: boolean; destroy?: () => void };
       if (stream && !streamWithDestroy.destroyed && typeof streamWithDestroy.destroy === 'function') {
         this.logger.info(`[${fileName}] Connection closed by client, chunk ${start}-${end} interrupted`);
-        streamWithDestroy.destroy();
+        try {
+          streamWithDestroy.destroy();
+        } catch (error) {
+          // Ignore errors during cleanup
+          this.logger.debug(`[${fileName}] Error during stream cleanup:`, error);
+        }
       }
     };
 

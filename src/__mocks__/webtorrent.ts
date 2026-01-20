@@ -23,7 +23,8 @@ export interface MockTorrent extends EventEmitter {
     files: MockTorrentFile[];
     pieceLength: number;
     pieces: boolean[];
-    select(pieceIndex: number, priority: boolean): void;
+    select(start: number, end: number, priority?: number, notify?: () => void): void;
+    deselect(start: number, end: number, priority: number): void;
     metadata: boolean;
 }
 
@@ -92,7 +93,11 @@ export function createMockTorrent(
     torrent.pieces = new Array(100).fill(true); // All pieces available
     torrent.metadata = true;
 
-    torrent.select = (_pieceIndex: number, _priority: boolean): void => {
+    torrent.select = (_start: number, _end: number, _priority?: number, _notify?: () => void): void => {
+        // Mock implementation
+    };
+
+    torrent.deselect = (_start: number, _end: number, _priority: number): void => {
         // Mock implementation
     };
 

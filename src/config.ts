@@ -2,6 +2,8 @@
  * Configuration for torrent streamer
  */
 
+import path from 'path';
+
 export interface Config {
   PORT: number;
   MAX_CHUNK_SIZE: number;
@@ -12,6 +14,8 @@ export interface Config {
   // When limit is reached, least recently used pieces are evicted
   // Default: 500 MB - limits total memory across all active torrents
   MAX_MEMORY_USAGE: number;
+  // Runtime directory for storing torrent files and logs
+  RUNTIME_DIR: string;
 }
 
 const config: Config = {
@@ -30,6 +34,9 @@ const config: Config = {
   // When limit is reached, least recently used pieces are evicted from memory
   // Pieces will be re-downloaded if needed after eviction
   MAX_MEMORY_USAGE: Number(process.env.MAX_MEMORY_USAGE) || 500 * 1024 * 1024, // 500 MB
+
+  // Runtime directory for storing torrent files and logs
+  RUNTIME_DIR: process.env.RUNTIME_DIR || path.join(process.cwd(), '.runtime'),
 
   // Video file extensions
   VIDEO_EXTENSIONS: ['.mp4', '.mkv', '.avi', '.mov', '.webm', '.m4v'] as const

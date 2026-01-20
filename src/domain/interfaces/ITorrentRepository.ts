@@ -90,6 +90,9 @@ export interface TorrentDebugInfo {
   totalPieces: number;
   pieces: number[]; // Array of 0/1 indicating which pieces are downloaded
   prioritizedPieces: number[]; // Array of 0/1 indicating which pieces are prioritized (selected)
+  downloadedPiecesCount: number; // Total number of downloaded pieces
+  downloadedRanges: number[][]; // Ranges of downloaded pieces: [[start, end], ...]
+  prioritizedRanges: number[][]; // Ranges of prioritized pieces: [[start, end], ...]
   files: Array<{
     name: string;
     length: number;

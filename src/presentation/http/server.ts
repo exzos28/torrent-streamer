@@ -12,13 +12,13 @@
 
 import config from '../../config';
 import { createApp } from './app';
-import { ConsoleLogger } from '../../infrastructure/logging/ConsoleLogger';
+import { CompositeLogger } from '../../infrastructure/logging/CompositeLogger';
 import { VideoFileFinder } from '../../infrastructure/torrent/VideoFileFinder';
 import { WebTorrentRepository } from '../../infrastructure/torrent/WebTorrentRepository';
 import { WebTorrentStreamService } from '../../infrastructure/streaming/WebTorrentStreamService';
 
 // Initialize dependencies
-const logger = new ConsoleLogger();
+const logger = new CompositeLogger();
 const videoFileFinder = new VideoFileFinder();
 const torrentRepository = new WebTorrentRepository(videoFileFinder, logger);
 const streamService = new WebTorrentStreamService(logger);
@@ -39,6 +39,9 @@ process.on('SIGINT', async (): Promise<void> => {
   logger.info('\n🛑 Stopping server...');
   await torrentRepository.destroy();
   logger.info('✅ All torrents stopped');
+  if ('close' in logger && typeof logger.close === 'function') {
+    logger.close();
+  }
   process.exit(0);
 });
 
@@ -46,5 +49,8 @@ process.on('SIGTERM', async (): Promise<void> => {
   logger.info('\n🛑 Stopping server...');
   await torrentRepository.destroy();
   logger.info('✅ All torrents stopped');
+  if ('close' in logger && typeof logger.close === 'function') {
+    logger.close();
+  }
   process.exit(0);
 });
