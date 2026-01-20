@@ -207,6 +207,11 @@ export class WebTorrentStreamService implements IStreamService {
         // Select the entire range of pieces with high priority
         // WebTorrent select API: select(start, end, priority?, notify?)
         // Priority: 1 = high priority, 0 = normal priority
+        const piecesInRange = endPiece - startPiece + 1;
+        this.logger.info(
+          `[${fileName}] Calling torrent.select(${startPiece}, ${endPiece}, priority=1) ` +
+          `for range ${start}-${end} (${piecesInRange} pieces)`
+        );
         torrent.select(startPiece, endPiece, 1);
         this.logger.debug(`[${fileName}] Prioritized pieces ${startPiece}-${endPiece} for range ${start}-${end}`);
       } catch (err) {

@@ -57,7 +57,7 @@ export class WebTorrentRepository implements ITorrentRepository {
             this.activeTorrents.set(magnet, torrent);
 
             // Create wrapper for tracking prioritized pieces
-            const wrapper = new TorrentWrapper(torrent);
+            const wrapper = new TorrentWrapper(torrent, this.logger);
             this.torrentWrappers.set(magnet, wrapper);
 
             // Wait for torrent to receive metadata
@@ -354,6 +354,13 @@ export class WebTorrentRepository implements ITorrentRepository {
                 // Cleanup downloaded pieces from prioritized tracking before getting array
                 wrapper.cleanupDownloadedPieces();
                 prioritizedPieces = wrapper.getPrioritizedPiecesArray(totalPieces);
+                
+                const prioritizedCount = countPieces(prioritizedPieces);
+                const prioritizedRanges = getRanges(prioritizedPieces);
+                this.logger.debug(
+                    `[getDebugInfo] ${torrent.name}: prioritizedPieces count=${prioritizedCount}, ` +
+                    `ranges=${JSON.stringify(prioritizedRanges)}, totalPieces=${totalPieces}`
+                );
             }
 
             // Calculate downloaded pieces count and ranges

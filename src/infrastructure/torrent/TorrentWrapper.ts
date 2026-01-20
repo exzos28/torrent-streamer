@@ -51,9 +51,11 @@ export class TorrentWrapper {
   private prioritizedPieces: Map<number, PrioritizedPiece> = new Map();
   private originalSelect: (start: number, end: number, priority?: number, notify?: () => void) => void;
   private originalDeselect: (start: number, end: number, priority: number) => void;
+  private logger?: { debug: (msg: string, ...args: unknown[]) => void; info: (msg: string, ...args: unknown[]) => void };
 
-  constructor(torrent: Torrent) {
+  constructor(torrent: Torrent, logger?: { debug: (msg: string, ...args: unknown[]) => void; info: (msg: string, ...args: unknown[]) => void }) {
     this.torrent = torrent;
+    this.logger = logger;
 
     // Store original methods (check if they exist first)
     this.originalSelect = torrent.select ? torrent.select.bind(torrent) : () => {};
@@ -82,6 +84,8 @@ export class TorrentWrapper {
   select(start: number, end: number, priority?: number, notify?: () => void): void {
     const priorityLevel = this._normalizePriority(priority);
     const now = new Date();
+    let addedCount = 0;
+    let updatedCount = 0;
 
     // Track all pieces in the range
     for (let pieceIndex = start; pieceIndex <= end; pieceIndex++) {
@@ -94,8 +98,17 @@ export class TorrentWrapper {
           priority: priorityLevel,
           selectedAt: existing?.selectedAt || now
         });
+        if (existing) {
+          updatedCount++;
+        } else {
+          addedCount++;
+        }
       }
     }
+
+    this.logger?.debug(
+      `[TorrentWrapper] select(${start}, ${end}, priority=${priority}): added ${addedCount}, updated ${updatedCount}, total prioritized: ${this.prioritizedPieces.size}`
+    );
 
     // Call original select method
     this.originalSelect(start, end, priority, notify);
@@ -110,6 +123,9 @@ export class TorrentWrapper {
       return;
     }
 
+    const beforeCount = this.prioritizedPieces.size;
+    let removedCount = 0;
+
     // Remove pieces that are already downloaded from prioritized tracking
     // They don't need to be prioritized anymore
     for (const pieceIndex of this.prioritizedPieces.keys()) {
@@ -120,9 +136,17 @@ export class TorrentWrapper {
           const pieceObj = piece as { missing?: number };
           if (pieceObj.missing === 0) {
             this.prioritizedPieces.delete(pieceIndex);
+            removedCount++;
           }
         }
       }
+    }
+
+    const afterCount = this.prioritizedPieces.size;
+    if (removedCount > 0 || beforeCount !== afterCount) {
+      this.logger?.debug(
+        `[TorrentWrapper] cleanupDownloadedPieces(): removed ${removedCount} downloaded pieces, before: ${beforeCount}, after: ${afterCount}`
+      );
     }
   }
 
@@ -165,11 +189,24 @@ export class TorrentWrapper {
    */
   getPrioritizedPiecesArray(totalPieces: number): number[] {
     const result = new Array(totalPieces).fill(0);
+    let validCount = 0;
+    let invalidCount = 0;
+
     for (const pieceIndex of this.prioritizedPieces.keys()) {
       if (pieceIndex >= 0 && pieceIndex < totalPieces) {
         result[pieceIndex] = 1;
+        validCount++;
+      } else {
+        invalidCount++;
       }
     }
+
+    const onesCount = result.filter(v => v === 1).length;
+    this.logger?.debug(
+      `[TorrentWrapper] getPrioritizedPiecesArray(totalPieces=${totalPieces}): ` +
+      `prioritizedPieces.size=${this.prioritizedPieces.size}, valid=${validCount}, invalid=${invalidCount}, result ones=${onesCount}`
+    );
+
     return result;
   }
 
