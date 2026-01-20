@@ -113,16 +113,15 @@ describe('WebTorrentRepository.getDebugInfo', () => {
         const wrapper = new TorrentWrapper(mockTorrent, mockLogger);
         (repository as any).torrentWrappers.set('magnet:test', wrapper);
 
-        // Prioritize pieces 5-15 (downloaded) and 30-40 (downloaded) and 60-70 (not downloaded)
+        // Prioritize pieces 5-15, 30-40, and 60-70
         wrapper.select(5, 15, 1);
         wrapper.select(30, 40, 1);
         wrapper.select(60, 70, 1);
 
         const debugInfo = repository.getDebugInfo();
 
-        // After cleanup, only non-downloaded prioritized pieces should remain
-        // So only 60-70 should be in prioritizedRanges
-        expect(debugInfo[0].prioritizedRanges).toEqual([[60, 70]]);
+        // All prioritized pieces should be in prioritizedRanges
+        expect(debugInfo[0].prioritizedRanges).toEqual([[5, 15], [30, 40], [60, 70]]);
     });
 
     it('should handle empty prioritized ranges', () => {

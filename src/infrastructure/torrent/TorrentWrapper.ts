@@ -58,8 +58,8 @@ export class TorrentWrapper {
     this.logger = logger;
 
     // Store original methods (check if they exist first)
-    this.originalSelect = torrent.select ? torrent.select.bind(torrent) : () => {};
-    this.originalDeselect = torrent.deselect ? torrent.deselect.bind(torrent) : () => {};
+    this.originalSelect = torrent.select ? torrent.select.bind(torrent) : () => { };
+    this.originalDeselect = torrent.deselect ? torrent.deselect.bind(torrent) : () => { };
 
     // Override select method to track prioritized pieces
     if (torrent.select) {
@@ -112,42 +112,6 @@ export class TorrentWrapper {
 
     // Call original select method
     this.originalSelect(start, end, priority, notify);
-  }
-
-  /**
-   * Remove pieces from prioritized tracking if they are already downloaded
-   * This helps keep prioritizedPieces clean and accurate
-   */
-  cleanupDownloadedPieces(): void {
-    if (!this.torrent.pieces || !Array.isArray(this.torrent.pieces)) {
-      return;
-    }
-
-    const beforeCount = this.prioritizedPieces.size;
-    let removedCount = 0;
-
-    // Remove pieces that are already downloaded from prioritized tracking
-    // They don't need to be prioritized anymore
-    for (const pieceIndex of this.prioritizedPieces.keys()) {
-      if (pieceIndex >= 0 && pieceIndex < this.torrent.pieces.length) {
-        const piece = this.torrent.pieces[pieceIndex];
-        // If piece is downloaded (not null and missing === 0), remove from prioritized
-        if (piece !== null && typeof piece === 'object' && 'missing' in piece) {
-          const pieceObj = piece as { missing?: number };
-          if (pieceObj.missing === 0) {
-            this.prioritizedPieces.delete(pieceIndex);
-            removedCount++;
-          }
-        }
-      }
-    }
-
-    const afterCount = this.prioritizedPieces.size;
-    if (removedCount > 0 || beforeCount !== afterCount) {
-      this.logger?.debug(
-        `[TorrentWrapper] cleanupDownloadedPieces(): removed ${removedCount} downloaded pieces, before: ${beforeCount}, after: ${afterCount}`
-      );
-    }
   }
 
   /**
