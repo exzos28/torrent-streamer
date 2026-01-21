@@ -7,8 +7,8 @@ import { TorrentEntity, TorrentFileEntity } from '../../domain/entities';
 import { WebTorrentAdapter } from './WebTorrentAdapter';
 import { IVideoFileFinder } from '../../domain/interfaces/IVideoFileFinder';
 import { ILogger } from '../../domain/interfaces/ILogger';
-import { isExtendedTorrent } from './WebTorrentExtendedTypes';
-import { TorrentWrapper } from './TorrentWrapper';
+import { isExtendedTorrent, ExtendedTorrent as WebTorrentExtendedTorrent } from './WebTorrentExtendedTypes';
+import { extendTorrent, isExtendedTorrent as isExtended, restoreTorrent, ExtendedTorrent } from './TorrentExtension';
 import { getRanges, countPieces } from './pieceRanges';
 
 /**
@@ -18,8 +18,7 @@ import { getRanges, countPieces } from './pieceRanges';
  */
 export class WebTorrentRepository implements ITorrentRepository {
     private client: Instance;
-    private activeTorrents: Map<string, Torrent>;
-    private torrentWrappers: Map<string, TorrentWrapper>;
+    private activeTorrents: Map<string, ExtendedTorrent>;
     private videoFileFinder: IVideoFileFinder;
     private logger: ILogger;
 
@@ -37,7 +36,6 @@ export class WebTorrentRepository implements ITorrentRepository {
 
         this.client = new WebTorrent();
         this.activeTorrents = new Map();
-        this.torrentWrappers = new Map();
         this.videoFileFinder = videoFileFinder;
         this.logger = logger;
     }
@@ -51,14 +49,13 @@ export class WebTorrentRepository implements ITorrentRepository {
 
             // Add new torrent with file storage in runtime directory
             const torrentsDir = path.join(config.RUNTIME_DIR, 'torrents');
-            torrent = this.client.add(magnet, {
+            const rawTorrent = this.client.add(magnet, {
                 path: torrentsDir
             });
-            this.activeTorrents.set(magnet, torrent);
 
-            // Create wrapper for tracking prioritized pieces
-            const wrapper = new TorrentWrapper(torrent, this.logger);
-            this.torrentWrappers.set(magnet, wrapper);
+            // Extend torrent with prioritized pieces tracking
+            torrent = extendTorrent(rawTorrent, this.logger);
+            this.activeTorrents.set(magnet, torrent);
 
             // Wait for torrent to receive metadata
             await new Promise<void>((resolve, reject) => {
@@ -96,12 +93,11 @@ export class WebTorrentRepository implements ITorrentRepository {
                     torrentRef.off('metadata', onMetadata);
                     torrentRef.off('error', onError);
                     this.logger.error('Torrent error:', raw);
-                    this.activeTorrents.delete(magnet);
-                    const wrapper = this.torrentWrappers.get(magnet);
-                    if (wrapper) {
-                        wrapper.restore();
-                        this.torrentWrappers.delete(magnet);
+                    const torrentToCleanup = this.activeTorrents.get(magnet);
+                    if (torrentToCleanup && isExtended(torrentToCleanup)) {
+                        restoreTorrent(torrentToCleanup);
                     }
+                    this.activeTorrents.delete(magnet);
                     reject(raw);
                 };
 
@@ -112,24 +108,24 @@ export class WebTorrentRepository implements ITorrentRepository {
                 // Timeout for metadata reception
                 timeoutId = setTimeout(() => {
                     if (isResolved) return;
-                    const hasMetadata = isExtendedTorrent(torrentRef) ? torrentRef.metadata : false;
+                    const rawTorrentRef = torrentRef as Torrent;
+                    const hasMetadata = isExtendedTorrent(rawTorrentRef) ? rawTorrentRef.metadata : false;
                     if (!hasMetadata) {
                         isResolved = true;
                         torrentRef.off('metadata', onMetadata);
                         torrentRef.off('error', onError);
-                        this.activeTorrents.delete(magnet);
-                        const wrapper = this.torrentWrappers.get(magnet);
-                        if (wrapper) {
-                            wrapper.restore();
-                            this.torrentWrappers.delete(magnet);
+                        const torrentToCleanup = this.activeTorrents.get(magnet);
+                        if (torrentToCleanup && isExtended(torrentToCleanup)) {
+                            restoreTorrent(torrentToCleanup);
                         }
+                        this.activeTorrents.delete(magnet);
                         reject(new Error('Metadata reception timeout'));
                     }
                 }, config.METADATA_TIMEOUT);
             });
         }
 
-        return WebTorrentAdapter.toTorrentEntity(torrent);
+        return WebTorrentAdapter.toTorrentEntity(torrent as Torrent);
     }
 
     get(magnet: string): TorrentEntity | null {
@@ -181,13 +177,11 @@ export class WebTorrentRepository implements ITorrentRepository {
     remove(magnet: string): boolean {
         const torrent = this.activeTorrents.get(magnet);
         if (torrent) {
-            this.client.remove(torrent);
-            this.activeTorrents.delete(magnet);
-            const wrapper = this.torrentWrappers.get(magnet);
-            if (wrapper) {
-                wrapper.restore();
-                this.torrentWrappers.delete(magnet);
+            this.client.remove(torrent as Torrent);
+            if (isExtended(torrent)) {
+                restoreTorrent(torrent);
             }
+            this.activeTorrents.delete(magnet);
             return true;
         }
         return false;
@@ -195,13 +189,14 @@ export class WebTorrentRepository implements ITorrentRepository {
 
     async destroy(): Promise<void> {
         return new Promise<void>((resolve) => {
-            // Restore all wrappers before destroying
-            for (const wrapper of this.torrentWrappers.values()) {
-                wrapper.restore();
+            // Restore all extended torrents before destroying
+            for (const torrent of this.activeTorrents.values()) {
+                if (isExtended(torrent)) {
+                    restoreTorrent(torrent);
+                }
             }
             this.client.destroy(() => {
                 this.activeTorrents.clear();
-                this.torrentWrappers.clear();
                 resolve();
             });
         });
@@ -212,15 +207,17 @@ export class WebTorrentRepository implements ITorrentRepository {
      * Needed for stream service to access piece information
      */
     getRawTorrent(magnet: string): Torrent | null {
-        return this.activeTorrents.get(magnet) || null;
+        const torrent = this.activeTorrents.get(magnet);
+        return torrent ? (torrent as Torrent) : null;
     }
 
     /**
-     * Internal method to get TorrentWrapper for a torrent
+     * Internal method to get extended torrent
      * Needed for tracking prioritized pieces
      */
-    getTorrentWrapper(magnet: string): TorrentWrapper | null {
-        return this.torrentWrappers.get(magnet) || null;
+    getExtendedTorrent(magnet: string): ExtendedTorrent | null {
+        const torrent = this.activeTorrents.get(magnet);
+        return (torrent && isExtended(torrent)) ? torrent : null;
     }
 
     /**
@@ -248,7 +245,7 @@ export class WebTorrentRepository implements ITorrentRepository {
 
         for (const [magnet, torrent] of this.activeTorrents.entries()) {
             // Get pieces information - get fresh data from torrent
-            const extendedTorrent = isExtendedTorrent(torrent) ? torrent : null;
+            // torrent is already ExtendedTorrent if it's in activeTorrents
             const pieceLength = torrent.pieceLength || 0;
             let totalPieces = 0;
             let piecesStatus: number[] = [];
@@ -280,8 +277,9 @@ export class WebTorrentRepository implements ITorrentRepository {
                 // If we got 0 downloaded pieces but torrent has progress, try bitfield as fallback
                 // This handles cases where pieces array might not be fully initialized
                 const downloadedCount = piecesStatus.filter(p => p === 1).length;
-                if (downloadedCount === 0 && torrent.progress > 0 && extendedTorrent?.bitfield) {
-                    const bitfield = extendedTorrent.bitfield;
+                const webTorrentExtended = isExtendedTorrent(torrent) ? torrent as WebTorrentExtendedTorrent : null;
+                if (downloadedCount === 0 && torrent.progress > 0 && webTorrentExtended?.bitfield) {
+                    const bitfield = webTorrentExtended.bitfield;
                     if (typeof bitfield.get === 'function') {
                         // Use bitfield to get actual piece status
                         piecesStatus = [];
@@ -305,7 +303,8 @@ export class WebTorrentRepository implements ITorrentRepository {
                 }
             } else {
                 // Fallback: try to get from bitfield first (most accurate)
-                const bitfield = extendedTorrent?.bitfield;
+                const webTorrentExtended = isExtendedTorrent(torrent) ? torrent as WebTorrentExtendedTorrent : null;
+                const bitfield = webTorrentExtended?.bitfield;
                 if (bitfield && typeof bitfield.get === 'function') {
                     // It's a bitfield - count pieces by checking each one
                     // First, try to get total from torrent.length and pieceLength
@@ -347,17 +346,24 @@ export class WebTorrentRepository implements ITorrentRepository {
                 }
             }
 
-            // Get prioritized pieces information from wrapper
+            // Get prioritized pieces information from extended torrent
             let prioritizedPieces: number[] = new Array(totalPieces).fill(0);
-            const wrapper = this.torrentWrappers.get(magnet);
-            if (wrapper) {
-                prioritizedPieces = wrapper.getPrioritizedPiecesArray(totalPieces);
-                
+            if (isExtended(torrent)) {
+                const prioritizedPiecesList = torrent.getPrioritizedPieces();
+                prioritizedPieces = torrent.getPrioritizedPiecesArray(totalPieces);
+
                 const prioritizedCount = countPieces(prioritizedPieces);
                 const prioritizedRanges = getRanges(prioritizedPieces);
                 this.logger.debug(
-                    `[getDebugInfo] ${torrent.name}: prioritizedPieces count=${prioritizedCount}, ` +
-                    `ranges=${JSON.stringify(prioritizedRanges)}, totalPieces=${totalPieces}`
+                    `[getDebugInfo] ${torrent.name}: totalPieces=${totalPieces}, ` +
+                    `prioritizedPieces count=${prioritizedCount}, ` +
+                    `prioritizedPieces.size=${prioritizedPiecesList.length}, ` +
+                    `ranges=${JSON.stringify(prioritizedRanges)}`
+                );
+            } else {
+                const rawTorrent = torrent as Torrent;
+                this.logger.debug(
+                    `[getDebugInfo] ${rawTorrent.name || 'unknown'}: torrent is not extended for magnet=${magnet.substring(0, 50)}...`
                 );
             }
 

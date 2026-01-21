@@ -21,7 +21,7 @@ export class StreamVideoUseCase {
   constructor(
     private torrentRepository: ITorrentRepository,
     private logger: ILogger
-  ) {}
+  ) { }
 
   async execute(request: StreamVideoRequest): Promise<StreamVideoResponse> {
     try {

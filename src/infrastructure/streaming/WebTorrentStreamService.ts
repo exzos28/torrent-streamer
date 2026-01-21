@@ -20,7 +20,6 @@ export class WebTorrentStreamService implements IStreamService {
 
   /**
    * Sets the raw WebTorrent file for a file entity
-   * This is needed to access piece information
    */
   setRawFile(fileEntity: TorrentFileEntity, rawFile: TorrentFile): void {
     this.rawFileMap.set(fileEntity, rawFile);
@@ -32,12 +31,9 @@ export class WebTorrentStreamService implements IStreamService {
     const fileSize = file.length;
 
     if (!range) {
-      // If no range header, send first small chunk (2 MB)
-      // so browser can detect format and then use range requests
       return this._sendInitialChunk(req, res, file, fileName, fileSize);
     }
 
-    // Parse and handle range request
     this._handleRangeRequest(req, res, file, fileName, fileSize, range).catch((err) => {
       this.logger.error(`[${fileName}] Error handling range request:`, err);
       if (!res.headersSent) {
@@ -46,10 +42,6 @@ export class WebTorrentStreamService implements IStreamService {
     });
   }
 
-  /**
-   * Sends initial chunk when no range header is present
-   * @private
-   */
   private _sendInitialChunk(
     req: Request,
     res: Response,
@@ -85,10 +77,6 @@ export class WebTorrentStreamService implements IStreamService {
     }
   }
 
-  /**
-   * Handles HTTP range request
-   * @private
-   */
   private async _handleRangeRequest(
     req: Request,
     res: Response,
@@ -97,45 +85,16 @@ export class WebTorrentStreamService implements IStreamService {
     fileSize: number,
     range: string
   ): Promise<void> {
-    // Parse range header (e.g., "bytes=0-1023")
     const parts = range.replace(/bytes=/, '').split('-');
     const start = parseInt(parts[0], 10);
-
-    // Determine end position
     const requestedEnd = parts[1] ? parseInt(parts[1], 10) : fileSize - 1;
 
-    // Check if requesting entire file (or close to it)
-    // Only limit if requesting the whole file or very large portion
-    const requestedSize = requestedEnd - start + 1;
-    const isRequestingEntireFile = start === 0 && requestedEnd >= fileSize - 1;
-    const isRequestingLargePortion = requestedSize > fileSize * 0.9; // More than 90% of file
-
-    let end: number;
-    if (isRequestingEntireFile || isRequestingLargePortion) {
-      // Limit chunk size only when requesting entire file or large portion
-      const maxAllowedEnd = Math.min(start + config.MAX_CHUNK_SIZE - 1, fileSize - 1);
-      end = Math.min(requestedEnd, maxAllowedEnd);
-      this.logger.info(
-        `[${fileName}] Requesting ${isRequestingEntireFile ? 'entire file' : 'large portion'} (${(requestedSize / 1024 / 1024).toFixed(2)} MB), limiting to ${((end - start + 1) / 1024 / 1024).toFixed(2)} MB`
-      );
-    } else {
-      // For normal range requests, serve the full requested range without limits
-      end = Math.min(requestedEnd, fileSize - 1);
-    }
-
+    // Use fixed chunk size to force multiple requests
+    const fixedChunkSize = config.CHUNK_SIZE;
+    const maxAllowedEnd = Math.min(start + fixedChunkSize - 1, fileSize - 1);
+    const end = Math.min(requestedEnd, maxAllowedEnd);
     const chunksize = end - start + 1;
 
-    // Log requested chunk
-    const startMB = (start / 1024 / 1024).toFixed(2);
-    const endMB = (end / 1024 / 1024).toFixed(2);
-    const chunkMB = (chunksize / 1024 / 1024).toFixed(2);
-    const progress = ((start / fileSize) * 100).toFixed(1);
-
-    this.logger.info(
-      `[${fileName}] Chunk request: bytes ${start}-${end} (${chunkMB} MB) | Position: ${startMB}-${endMB} MB | Progress: ${progress}%`
-    );
-
-    // Check if chunk is valid
     if (start >= fileSize) {
       this.logger.warn(`[${fileName}] Invalid range: start ${start} >= file.length ${fileSize}`);
       res.writeHead(416, { 'Content-Range': `bytes */${fileSize}` });
@@ -143,24 +102,35 @@ export class WebTorrentStreamService implements IStreamService {
       return;
     }
 
-    // Prioritize pieces for this range (but don't wait - stream immediately)
-    // This helps WebTorrent focus on downloading needed pieces while we stream
+    if (requestedEnd - start + 1 > fixedChunkSize) {
+      this.logger.info(
+        `[${fileName}] Requesting ${((requestedEnd - start + 1) / 1024 / 1024).toFixed(2)} MB, ` +
+        `limiting to fixed chunk size ${(chunksize / 1024 / 1024).toFixed(2)} MB`
+      );
+    }
+
+    // Prioritize and wait for pieces
     await this._prioritizePieces(file, fileName, start, end);
+    const piecesReady = await this._waitForPieces(file, fileName, start, end);
+
+    if (!piecesReady) {
+      this.logger.warn(`[${fileName}] Timeout waiting for pieces, sending anyway`);
+    }
 
     res.writeHead(206, {
       'Content-Range': `bytes ${start}-${end}/${fileSize}`,
       'Accept-Ranges': 'bytes',
       'Content-Length': chunksize,
-      'Content-Type': 'video/mp4'
+      'Content-Type': 'video/mp4',
+      'Cache-Control': 'no-cache'
     });
 
-    // Create stream for requested byte range
     try {
       const stream = file.createReadStream({ start, end });
       this._setupStreamHandlers(req, res, stream, fileName, start, end);
       stream.pipe(res);
     } catch (error) {
-      this.logger.error(`[${fileName}] Error creating read stream for range ${start}-${end}:`, error);
+      this.logger.error(`[${fileName}] Error creating read stream:`, error);
       if (!res.headersSent) {
         res.status(500).json({
           error: 'Failed to create stream. Torrent may not be ready yet. Please try again in a moment.'
@@ -169,62 +139,221 @@ export class WebTorrentStreamService implements IStreamService {
     }
   }
 
+  private async _waitForPieces(
+    file: TorrentFileEntity,
+    fileName: string,
+    start: number,
+    end: number
+  ): Promise<boolean> {
+    const torrent = this._getTorrent(file);
+    if (!torrent) {
+      return false;
+    }
+
+    const pieceLength = torrent.pieceLength || 0;
+    if (pieceLength === 0) {
+      return false;
+    }
+
+    const startPiece = Math.floor(start / pieceLength);
+    const endPiece = Math.floor(end / pieceLength);
+    const requiredPieces = new Set<number>();
+    for (let i = startPiece; i <= endPiece; i++) {
+      requiredPieces.add(i);
+    }
+
+    // Check if already downloaded (pieces МОГУТ уже быть)
+    this.logger.debug(`[${fileName}] Initial check for pieces ${startPiece}-${endPiece} (${requiredPieces.size} pieces)`);
+
+    // Log what pieces are actually downloaded in the torrent (to see what WebTorrent is downloading)
+    const pieces = torrent.pieces;
+    if (Array.isArray(pieces)) {
+      // Find first 20 downloaded pieces (to see what WebTorrent is actually downloading)
+      const downloadedIndices: number[] = [];
+      for (let i = 0; i < pieces.length && downloadedIndices.length < 20; i++) {
+        const p = pieces[i];
+        if (p !== null && p && typeof p === 'object' && 'missing' in p && (p.missing === undefined || p.missing === 0)) {
+          downloadedIndices.push(i);
+        }
+      }
+      if (downloadedIndices.length > 0) {
+        this.logger.debug(`[${fileName}] Actually downloaded pieces (first 20): [${downloadedIndices.join(', ')}]`);
+      } else {
+        this.logger.debug(`[${fileName}] No fully downloaded pieces found yet`);
+      }
+
+      // Also check our required pieces
+      const requiredStatus = Array.from(requiredPieces).map(i => {
+        const p = pieces[i];
+        if (p === null) return `${i}:null`;
+        if (p && typeof p === 'object' && 'missing' in p) {
+          if (p.missing === undefined || p.missing === 0) {
+            return `${i}:✓`;
+          }
+          const pieceLength = p.length || torrent.pieceLength || 4194304;
+          const downloadedPercentage = ((pieceLength - (p.missing || 0)) / pieceLength * 100).toFixed(0);
+          return `${i}:${downloadedPercentage}%`;
+        }
+        return `${i}:?`;
+      }).join(', ');
+      this.logger.debug(`[${fileName}] Required pieces ${startPiece}-${endPiece} status: [${requiredStatus}]`);
+    }
+
+    if (this._arePiecesDownloaded(torrent, requiredPieces)) {
+      this.logger.info(`[${fileName}] All required pieces ${startPiece}-${endPiece} are already downloaded, proceeding immediately`);
+      return true;
+    }
+
+    this.logger.info(`[${fileName}] Waiting for pieces ${startPiece}-${endPiece} to fully download...`);
+
+    // Wait and listen to 'download' events
+    return new Promise<boolean>((resolve) => {
+      let timeout: NodeJS.Timeout | null = null;
+      let isResolved = false;
+
+      const cleanup = (): void => {
+        if (isResolved) return;
+        isResolved = true;
+        if (timeout) clearTimeout(timeout);
+        torrent.off('download', checkPieces);
+        torrent.off('done', checkPieces);
+      };
+
+      let lastDownloadedCount = 0;
+      const checkPieces = (): void => {
+        if (isResolved) return;
+
+        // Count how many of our required pieces are downloaded
+        const pieces = torrent.pieces;
+        let downloadedCount = 0;
+        if (Array.isArray(pieces)) {
+          downloadedCount = Array.from(requiredPieces).filter(i => {
+            if (i < 0 || i >= pieces.length) return false;
+            const p = pieces[i];
+            // Piece is downloaded if: not null AND (missing is undefined OR missing === 0)
+            if (p === null) return false;
+            if (p && typeof p === 'object' && 'missing' in p) {
+              return p.missing === undefined || p.missing === 0;
+            }
+            // Piece exists but no missing property - assume downloaded
+            return true;
+          }).length;
+        }
+
+        // Only log when count changes (to reduce spam)
+        if (downloadedCount !== lastDownloadedCount) {
+          lastDownloadedCount = downloadedCount;
+          this.logger.debug(`[${fileName}] Pieces ${startPiece}-${endPiece}: ${downloadedCount}/${requiredPieces.size} downloaded after download/done event`);
+        }
+
+        if (this._arePiecesDownloaded(torrent, requiredPieces)) {
+          cleanup();
+          this.logger.info(`[${fileName}] All required pieces ${startPiece}-${endPiece} are now downloaded`);
+          resolve(true);
+        }
+      };
+
+      torrent.on('download', checkPieces);
+      torrent.on('done', checkPieces);
+
+      timeout = setTimeout(() => {
+        if (!isResolved) {
+          cleanup();
+          this.logger.warn(`[${fileName}] Timeout waiting for pieces ${startPiece}-${endPiece}`);
+          resolve(false);
+        }
+      }, config.PIECE_WAIT_TIMEOUT);
+    });
+  }
+
   /**
-   * Prioritizes downloading pieces for the requested range
-   * Does NOT wait - just tells WebTorrent to prioritize these pieces
-   * @private
+   * Checks if all required pieces are downloaded
+   * pieces: Array<TorrentPiece | null>
+   * TorrentPiece: { length: number, missing: number }
    */
+  private _arePiecesDownloaded(torrent: any, requiredPieces: Set<number>): boolean {
+    const pieces = torrent.pieces;
+    if (!Array.isArray(pieces)) {
+      this.logger.debug(`_arePiecesDownloaded: pieces is not an array, type=${typeof pieces}`);
+      return false;
+    }
+
+    const pieceStatuses: string[] = [];
+    let allDownloaded = true;
+
+    for (const pieceIndex of requiredPieces) {
+      if (pieceIndex < 0 || pieceIndex >= pieces.length) {
+        pieceStatuses.push(`${pieceIndex}:out-of-range`);
+        allDownloaded = false;
+        continue;
+      }
+
+      const piece = pieces[pieceIndex];
+      if (piece === null) {
+        pieceStatuses.push(`${pieceIndex}:null`);
+        allDownloaded = false;
+      } else if (piece && typeof piece === 'object' && 'missing' in piece) {
+        if (piece.missing === undefined || piece.missing === 0) {
+          pieceStatuses.push(`${pieceIndex}:downloaded`);
+        } else {
+          const pieceLength = piece.length || torrent.pieceLength || 4194304;
+          const missingPercentage = ((piece.missing || 0) / pieceLength) * 100;
+          pieceStatuses.push(`${pieceIndex}:missing=${piece.missing}(${missingPercentage.toFixed(1)}%)`);
+          allDownloaded = false;
+        }
+      } else {
+        pieceStatuses.push(`${pieceIndex}:unknown(${typeof piece})`);
+        // Assume downloaded if piece exists but doesn't have missing property
+      }
+    }
+
+    this.logger.debug(
+      `_arePiecesDownloaded: checking pieces [${Array.from(requiredPieces).join(',')}], ` +
+      `status: [${pieceStatuses.join(', ')}], ` +
+      `allDownloaded=${allDownloaded}, ` +
+      `torrent.progress=${(torrent.progress * 100).toFixed(2)}%, ` +
+      `pieces.length=${pieces.length}`
+    );
+
+    return allDownloaded;
+  }
+
+  private _getTorrent(file: TorrentFileEntity): any | null {
+    const rawFile = this.rawFileMap.get(file);
+    if (!rawFile) return null;
+    const extendedFile = isExtendedTorrentFile(rawFile) ? rawFile : null;
+    return extendedFile?._torrent || null;
+  }
+
   private async _prioritizePieces(
     file: TorrentFileEntity,
     fileName: string,
     start: number,
     end: number
   ): Promise<void> {
-    // Get raw WebTorrent file to access piece information
-    const rawFile = this.rawFileMap.get(file);
-    if (!rawFile) {
-      return; // Can't prioritize, skip
-    }
-
-    // Access private _torrent property for piece information
-    const extendedFile = isExtendedTorrentFile(rawFile) ? rawFile : null;
-    const torrent = extendedFile?._torrent;
-    if (!torrent) {
-      return;
-    }
+    const torrent = this._getTorrent(file);
+    if (!torrent) return;
 
     const pieceLength = torrent.pieceLength || 0;
-    if (pieceLength === 0) {
-      return; // Can't calculate pieces, skip
-    }
+    if (pieceLength === 0) return;
 
     const startPiece = Math.floor(start / pieceLength);
     const endPiece = Math.floor(end / pieceLength);
+    const MAX_PRIORITIZED_PIECES = 100;
+    const limitedEndPiece = Math.min(endPiece, startPiece + MAX_PRIORITIZED_PIECES - 1);
 
-    // Prioritize downloading these pieces (but don't wait)
     if (torrent.select && typeof torrent.select === 'function') {
       try {
-        // Select the entire range of pieces with high priority
-        // WebTorrent select API: select(start, end, priority?, notify?)
-        // Priority: 1 = high priority, 0 = normal priority
-        const piecesInRange = endPiece - startPiece + 1;
+        torrent.select(startPiece, limitedEndPiece, 1);
         this.logger.info(
-          `[${fileName}] Calling torrent.select(${startPiece}, ${endPiece}, priority=1) ` +
-          `for range ${start}-${end} (${piecesInRange} pieces)`
+          `[${fileName}] Prioritized pieces ${startPiece}-${limitedEndPiece} for range ${start}-${end}`
         );
-        torrent.select(startPiece, endPiece, 1);
-        this.logger.debug(`[${fileName}] Prioritized pieces ${startPiece}-${endPiece} for range ${start}-${end}`);
       } catch (err) {
-        // Ignore errors - prioritization is best-effort
-        this.logger.debug(`[${fileName}] Failed to prioritize pieces ${startPiece}-${endPiece}:`, err);
+        this.logger.debug(`[${fileName}] Failed to prioritize pieces:`, err);
       }
     }
   }
 
-  /**
-   * Sets up error handling and cleanup for stream
-   * @private
-   */
   private _setupStreamHandlers(
     req: Request,
     res: Response,
@@ -233,7 +362,6 @@ export class WebTorrentStreamService implements IStreamService {
     start: number,
     end: number
   ): void {
-    // Stream error handling
     stream.on('error', (err: Error) => {
       if (!res.headersSent) {
         res.status(500).end();
@@ -241,29 +369,20 @@ export class WebTorrentStreamService implements IStreamService {
       this.logger.error(`[${fileName}] Stream error (bytes ${start}-${end}):`, err.message);
     });
 
-    // Log chunk transfer completion
     stream.on('end', () => {
       this.logger.info(`[${fileName}] Chunk ${start}-${end} successfully sent`);
     });
 
-    // Client disconnect handling
     let isCleanedUp = false;
     const cleanup = (): void => {
-      // Prevent multiple cleanup calls
-      if (isCleanedUp) {
-        return;
-      }
+      if (isCleanedUp) return;
       isCleanedUp = true;
 
-      // Check if stream has destroy method (NodeJS.ReadableStream may have it)
-      // Use type guard pattern instead of type assertion
       const streamWithDestroy = stream as NodeJS.ReadableStream & { destroyed?: boolean; destroy?: () => void };
       if (stream && !streamWithDestroy.destroyed && typeof streamWithDestroy.destroy === 'function') {
-        this.logger.info(`[${fileName}] Connection closed by client, chunk ${start}-${end} interrupted`);
         try {
           streamWithDestroy.destroy();
         } catch (error) {
-          // Ignore errors during cleanup
           this.logger.debug(`[${fileName}] Error during stream cleanup:`, error);
         }
       }

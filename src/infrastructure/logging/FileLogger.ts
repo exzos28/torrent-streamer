@@ -51,11 +51,9 @@ export class FileLogger implements ILogger {
       // Streams will remain null, logging will fall back to console only
     }
 
-    // Also log to console for immediate feedback
+    // Log initialization to file only (console logging is handled by CompositeLogger)
     if (this.writeStream) {
-      this.log(`FileLogger initialized. Logs: ${this.logFile}, Errors: ${this.errorFile}`);
-    } else {
-      console.warn('FileLogger: Failed to initialize file streams, using console only');
+      this.writeToFile(this.writeStream, 'INFO', `FileLogger initialized. Logs: ${this.logFile}, Errors: ${this.errorFile}`);
     }
   }
 
@@ -90,29 +88,29 @@ export class FileLogger implements ILogger {
   }
 
   log(message: string, ...args: unknown[]): void {
-    console.log(message, ...args);
+    // Only write to file - console logging is handled by CompositeLogger
     this.writeToFile(this.writeStream, 'LOG', message, ...args);
   }
 
   error(message: string, ...args: unknown[]): void {
-    console.error(message, ...args);
+    // Only write to file - console logging is handled by CompositeLogger
     this.writeToFile(this.errorStream, 'ERROR', message, ...args);
     // Also write errors to main log file
     this.writeToFile(this.writeStream, 'ERROR', message, ...args);
   }
 
   warn(message: string, ...args: unknown[]): void {
-    console.warn(message, ...args);
+    // Only write to file - console logging is handled by CompositeLogger
     this.writeToFile(this.writeStream, 'WARN', message, ...args);
   }
 
   info(message: string, ...args: unknown[]): void {
-    console.info(message, ...args);
+    // Only write to file - console logging is handled by CompositeLogger
     this.writeToFile(this.writeStream, 'INFO', message, ...args);
   }
 
   debug(message: string, ...args: unknown[]): void {
-    console.debug(message, ...args);
+    // Only write to file - console logging is handled by CompositeLogger
     this.writeToFile(this.writeStream, 'DEBUG', message, ...args);
   }
 

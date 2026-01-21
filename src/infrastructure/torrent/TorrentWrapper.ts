@@ -68,6 +68,11 @@ export class TorrentWrapper {
     if (torrent.deselect) {
       torrent.deselect = this.deselect.bind(this);
     }
+
+    this.logger?.debug(
+      `[TorrentWrapper] Created wrapper for torrent: ${torrent.name || 'unknown'}, ` +
+      `infoHash: ${torrent.infoHash || 'unknown'}, has select: ${!!torrent.select}, has deselect: ${!!torrent.deselect}`
+    );
   }
 
   /**
@@ -87,28 +92,36 @@ export class TorrentWrapper {
     let addedCount = 0;
     let updatedCount = 0;
 
-    // Track all pieces in the range
-    for (let pieceIndex = start; pieceIndex <= end; pieceIndex++) {
-      const existing = this.prioritizedPieces.get(pieceIndex);
+    // Only track pieces with priority > 0 (explicitly prioritized)
+    // WebTorrent automatically selects all pieces with priority=0/false, which we ignore
+    if (priorityLevel > 0) {
+      // Track all pieces in the range
+      for (let pieceIndex = start; pieceIndex <= end; pieceIndex++) {
+        const existing = this.prioritizedPieces.get(pieceIndex);
 
-      // Only update if new priority is higher or equal
-      if (!existing || priorityLevel >= existing.priority) {
-        this.prioritizedPieces.set(pieceIndex, {
-          pieceIndex,
-          priority: priorityLevel,
-          selectedAt: existing?.selectedAt || now
-        });
-        if (existing) {
-          updatedCount++;
-        } else {
-          addedCount++;
+        // Only update if new priority is higher or equal
+        if (!existing || priorityLevel >= existing.priority) {
+          this.prioritizedPieces.set(pieceIndex, {
+            pieceIndex,
+            priority: priorityLevel,
+            selectedAt: existing?.selectedAt || now
+          });
+          if (existing) {
+            updatedCount++;
+          } else {
+            addedCount++;
+          }
         }
       }
-    }
 
-    this.logger?.debug(
-      `[TorrentWrapper] select(${start}, ${end}, priority=${priority}): added ${addedCount}, updated ${updatedCount}, total prioritized: ${this.prioritizedPieces.size}`
-    );
+      this.logger?.debug(
+        `[TorrentWrapper] select(${start}, ${end}, priority=${priority}): added ${addedCount}, updated ${updatedCount}, total prioritized: ${this.prioritizedPieces.size}`
+      );
+    } else {
+      this.logger?.debug(
+        `[TorrentWrapper] select(${start}, ${end}, priority=${priority}): ignoring (priority=0, WebTorrent default)`
+      );
+    }
 
     // Call original select method
     this.originalSelect(start, end, priority, notify);
@@ -120,13 +133,23 @@ export class TorrentWrapper {
    */
   deselect(start: number, end: number, priority: number): void {
     const priorityLevel = this._normalizePriority(priority);
+    const beforeCount = this.prioritizedPieces.size;
+    let removedCount = 0;
 
     // Remove pieces from tracking if they match the priority
     for (let pieceIndex = start; pieceIndex <= end; pieceIndex++) {
       const existing = this.prioritizedPieces.get(pieceIndex);
       if (existing && existing.priority === priorityLevel) {
         this.prioritizedPieces.delete(pieceIndex);
+        removedCount++;
       }
+    }
+
+    const afterCount = this.prioritizedPieces.size;
+    if (removedCount > 0 || beforeCount !== afterCount) {
+      this.logger?.debug(
+        `[TorrentWrapper] deselect(${start}, ${end}, priority=${priority}): removed ${removedCount}, before: ${beforeCount}, after: ${afterCount}`
+      );
     }
 
     // Call original deselect method
