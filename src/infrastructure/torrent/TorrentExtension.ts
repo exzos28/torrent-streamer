@@ -57,10 +57,10 @@ function normalizePriority(priority?: number | boolean): PiecePriority {
     return priority ? PiecePriority.HIGH : PiecePriority.NONE;
   }
   if (typeof priority === 'number') {
-    if (priority <= 0) return PiecePriority.NONE;
-    if (priority <= 1) return PiecePriority.LOW;
-    if (priority <= 2) return PiecePriority.NORMAL;
-    if (priority <= 3) return PiecePriority.HIGH;
+    if (priority <= 0) {return PiecePriority.NONE;}
+    if (priority <= 1) {return PiecePriority.LOW;}
+    if (priority <= 2) {return PiecePriority.NORMAL;}
+    if (priority <= 3) {return PiecePriority.HIGH;}
     return PiecePriority.CRITICAL;
   }
   return PiecePriority.NONE;

@@ -85,42 +85,164 @@ export class WebTorrentStreamService implements IStreamService {
     fileSize: number,
     range: string
   ): Promise<void> {
-    const parts = range.replace(/bytes=/, '').split('-');
-    const start = parseInt(parts[0], 10);
-    const requestedEnd = parts[1] ? parseInt(parts[1], 10) : fileSize - 1;
-
-    // Use fixed chunk size to force multiple requests
-    const fixedChunkSize = config.CHUNK_SIZE;
-    const maxAllowedEnd = Math.min(start + fixedChunkSize - 1, fileSize - 1);
-    const end = Math.min(requestedEnd, maxAllowedEnd);
-    const chunksize = end - start + 1;
-
-    if (start >= fileSize) {
-      this.logger.warn(`[${fileName}] Invalid range: start ${start} >= file.length ${fileSize}`);
+    const parsedRange = this._parseRangeHeader(range);
+    if (!parsedRange) {
       res.writeHead(416, { 'Content-Range': `bytes */${fileSize}` });
       res.end();
       return;
     }
 
+    const { start, end } = parsedRange;
+
+    if (!this._validateRange(res, start, end, fileSize, fileName)) {
+      return;
+    }
+
+    const { end: allowedEnd, chunkSize } = this._calculateChunkRange(start, end, fileSize, fileName);
+
+    await this._ensurePiecesReady(file, fileName, start, allowedEnd);
+
+    this._sendRangeResponse(req, res, file, fileName, start, allowedEnd, chunkSize, fileSize);
+  }
+
+  /**
+   * Parses the Range header and extracts start and requested end positions
+   * Only parses the header format, no validation of values
+   * @returns Parsed range or null if start/end is missing or invalid
+   */
+  private _parseRangeHeader(
+    range: string
+  ): { start: number; end: number } | null {
+    // Remove 'bytes=' prefix
+    const rangeValue = range.replace(/^bytes=/, '');
+    if (!rangeValue) {
+      return null;
+    }
+
+    const parts = rangeValue.split('-');
+    if (parts.length !== 2) {
+      return null;
+    }
+
+    const startStr = parts[0].trim();
+    const endStr = parts[1].trim();
+
+    // Start must be provided and valid
+    if (!startStr) {
+      return null;
+    }
+
+    const start = parseInt(startStr, 10);
+    if (isNaN(start)) {
+      return null;
+    }
+
+    // End must be provided and valid
+    if (!endStr) {
+      return null;
+    }
+
+    const end = parseInt(endStr, 10);
+    if (isNaN(end)) {
+      return null;
+    }
+
+    return { start, end };
+  }
+
+  /**
+   * Validates the range request and sends 416 error if invalid
+   * @returns true if range is valid, false otherwise
+   */
+  private _validateRange(
+    res: Response,
+    start: number,
+    end: number,
+    fileSize: number,
+    fileName: string
+  ): boolean {
+    if (start >= fileSize) {
+      this.logger.warn(`[${fileName}] Invalid range: start ${start} >= file.length ${fileSize}`);
+      res.writeHead(416, { 'Content-Range': `bytes */${fileSize}` });
+      res.end();
+      return false;
+    }
+
+    if (end >= fileSize) {
+      this.logger.warn(`[${fileName}] Invalid range: end ${end} >= file.length ${fileSize}`);
+      res.writeHead(416, { 'Content-Range': `bytes */${fileSize}` });
+      res.end();
+      return false;
+    }
+
+    if (start > end) {
+      this.logger.warn(`[${fileName}] Invalid range: start ${start} > end ${end}`);
+      res.writeHead(416, { 'Content-Range': `bytes */${fileSize}` });
+      res.end();
+      return false;
+    }
+
+    return true;
+  }
+
+  /**
+   * Calculates the actual chunk range based on fixed chunk size limits
+   */
+  private _calculateChunkRange(
+    start: number,
+    requestedEnd: number,
+    fileSize: number,
+    fileName: string
+  ): { end: number; chunkSize: number } {
+    const fixedChunkSize = config.CHUNK_SIZE;
+    const maxAllowedEnd = Math.min(start + fixedChunkSize - 1, fileSize - 1);
+    const end = Math.min(requestedEnd, maxAllowedEnd);
+    const chunkSize = end - start + 1;
+
     if (requestedEnd - start + 1 > fixedChunkSize) {
       this.logger.info(
         `[${fileName}] Requesting ${((requestedEnd - start + 1) / 1024 / 1024).toFixed(2)} MB, ` +
-        `limiting to fixed chunk size ${(chunksize / 1024 / 1024).toFixed(2)} MB`
+        `limiting to fixed chunk size ${(chunkSize / 1024 / 1024).toFixed(2)} MB`
       );
     }
 
-    // Prioritize and wait for pieces
+    return { end, chunkSize };
+  }
+
+  /**
+   * Ensures that required pieces are prioritized and ready for streaming
+   */
+  private async _ensurePiecesReady(
+    file: TorrentFileEntity,
+    fileName: string,
+    start: number,
+    end: number
+  ): Promise<void> {
     await this._prioritizePieces(file, fileName, start, end);
     const piecesReady = await this._waitForPieces(file, fileName, start, end);
 
     if (!piecesReady) {
       this.logger.warn(`[${fileName}] Timeout waiting for pieces, sending anyway`);
     }
+  }
 
+  /**
+   * Sends the HTTP range response with appropriate headers and streams the data
+   */
+  private _sendRangeResponse(
+    req: Request,
+    res: Response,
+    file: TorrentFileEntity,
+    fileName: string,
+    start: number,
+    end: number,
+    chunkSize: number,
+    fileSize: number
+  ): void {
     res.writeHead(206, {
       'Content-Range': `bytes ${start}-${end}/${fileSize}`,
       'Accept-Ranges': 'bytes',
-      'Content-Length': chunksize,
+      'Content-Length': chunkSize,
       'Content-Type': 'video/mp4',
       'Cache-Control': 'no-cache'
     });
@@ -185,7 +307,9 @@ export class WebTorrentStreamService implements IStreamService {
       // Also check our required pieces
       const requiredStatus = Array.from(requiredPieces).map(i => {
         const p = pieces[i];
-        if (p === null) return `${i}:null`;
+        if (p === null) {
+          return `${i}:null`;
+        }
         if (p && typeof p === 'object' && 'missing' in p) {
           if (p.missing === undefined || p.missing === 0) {
             return `${i}:✓`;
@@ -212,26 +336,36 @@ export class WebTorrentStreamService implements IStreamService {
       let isResolved = false;
 
       const cleanup = (): void => {
-        if (isResolved) return;
+        if (isResolved) {
+          return;
+        }
         isResolved = true;
-        if (timeout) clearTimeout(timeout);
+        if (timeout) {
+          clearTimeout(timeout);
+        }
         torrent.off('download', checkPieces);
         torrent.off('done', checkPieces);
       };
 
       let lastDownloadedCount = 0;
       const checkPieces = (): void => {
-        if (isResolved) return;
+        if (isResolved) {
+          return;
+        }
 
         // Count how many of our required pieces are downloaded
         const pieces = torrent.pieces;
         let downloadedCount = 0;
         if (Array.isArray(pieces)) {
           downloadedCount = Array.from(requiredPieces).filter(i => {
-            if (i < 0 || i >= pieces.length) return false;
+            if (i < 0 || i >= pieces.length) {
+              return false;
+            }
             const p = pieces[i];
             // Piece is downloaded if: not null AND (missing is undefined OR missing === 0)
-            if (p === null) return false;
+            if (p === null) {
+              return false;
+            }
             if (p && typeof p === 'object' && 'missing' in p) {
               return p.missing === undefined || p.missing === 0;
             }
@@ -320,7 +454,9 @@ export class WebTorrentStreamService implements IStreamService {
 
   private _getTorrent(file: TorrentFileEntity): any | null {
     const rawFile = this.rawFileMap.get(file);
-    if (!rawFile) return null;
+    if (!rawFile) {
+      return null;
+    }
     const extendedFile = isExtendedTorrentFile(rawFile) ? rawFile : null;
     return extendedFile?._torrent || null;
   }
@@ -332,10 +468,14 @@ export class WebTorrentStreamService implements IStreamService {
     end: number
   ): Promise<void> {
     const torrent = this._getTorrent(file);
-    if (!torrent) return;
+    if (!torrent) {
+      return;
+    }
 
     const pieceLength = torrent.pieceLength || 0;
-    if (pieceLength === 0) return;
+    if (pieceLength === 0) {
+      return;
+    }
 
     const startPiece = Math.floor(start / pieceLength);
     const endPiece = Math.floor(end / pieceLength);
@@ -375,7 +515,9 @@ export class WebTorrentStreamService implements IStreamService {
 
     let isCleanedUp = false;
     const cleanup = (): void => {
-      if (isCleanedUp) return;
+      if (isCleanedUp) {
+        return;
+      }
       isCleanedUp = true;
 
       const streamWithDestroy = stream as NodeJS.ReadableStream & { destroyed?: boolean; destroy?: () => void };

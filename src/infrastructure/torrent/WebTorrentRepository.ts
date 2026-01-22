@@ -77,7 +77,7 @@ export class WebTorrentRepository implements ITorrentRepository {
                 };
 
                 const onMetadata = (): void => {
-                    if (isResolved) return;
+                    if (isResolved) {return;}
                     isResolved = true;
                     cleanup();
                     torrentRef.off('metadata', onMetadata);
@@ -87,7 +87,7 @@ export class WebTorrentRepository implements ITorrentRepository {
                 };
 
                 const onError = (raw: Error | string): void => {
-                    if (isResolved) return;
+                    if (isResolved) {return;}
                     isResolved = true;
                     cleanup();
                     torrentRef.off('metadata', onMetadata);
@@ -107,7 +107,7 @@ export class WebTorrentRepository implements ITorrentRepository {
 
                 // Timeout for metadata reception
                 timeoutId = setTimeout(() => {
-                    if (isResolved) return;
+                    if (isResolved) {return;}
                     const rawTorrentRef = torrentRef as Torrent;
                     const hasMetadata = isExtendedTorrent(rawTorrentRef) ? rawTorrentRef.metadata : false;
                     if (!hasMetadata) {

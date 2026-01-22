@@ -224,8 +224,8 @@ export function generateTorrentsSVG(
  * Formats bytes to human readable format
  */
 function formatBytes(bytes: number): string {
-    if (!bytes || isNaN(bytes) || bytes < 0) return '0 B';
-    if (bytes === 0) return '0 B';
+    if (!bytes || isNaN(bytes) || bytes < 0) {return '0 B';}
+    if (bytes === 0) {return '0 B';}
     const k = 1024;
     const sizes = ['B', 'KB', 'MB', 'GB'];
     const i = Math.floor(Math.log(bytes) / Math.log(k));
