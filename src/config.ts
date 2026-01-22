@@ -9,6 +9,7 @@ export interface Config {
   MAX_CHUNK_SIZE: number;
   INITIAL_CHUNK_SIZE: number;
   CHUNK_SIZE: number; // Fixed chunk size for streaming (default: 50 MB)
+  BUFFER_SIZE: number; // Prefetch buffer size ahead of requested range (default: 15 MB)
   METADATA_TIMEOUT: number;
   PIECE_WAIT_TIMEOUT: number; // Timeout for waiting pieces to download (default: 60 seconds)
   VIDEO_EXTENSIONS: readonly string[];
@@ -28,6 +29,7 @@ const config: Config = {
   MAX_CHUNK_SIZE: 10 * 1024 * 1024, // 10 MB (deprecated, use CHUNK_SIZE instead)
   INITIAL_CHUNK_SIZE: 2 * 1024 * 1024, // 2 MB
   CHUNK_SIZE: Number(process.env.CHUNK_SIZE) || 50 * 1024 * 1024, // 50 MB - fixed chunk size for streaming
+  BUFFER_SIZE: Number(process.env.BUFFER_SIZE) || 15 * 1024 * 1024, // 15 MB - prefetch buffer ahead of requested range
 
   // Torrent configuration
   METADATA_TIMEOUT: 30000, // 30 seconds
