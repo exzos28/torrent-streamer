@@ -1,15 +1,16 @@
 /**
  * Unit tests for WebTorrentStreamService
- * Tests piece waiting and download checking functionality
+ * Tests range parsing and normalization functionality
  */
 
-import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest';
-import { WebTorrentStreamService } from './WebTorrentStreamService';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { ILogger } from '../../domain/interfaces/ILogger';
+import { RangeParser } from './utils/RangeParser';
+import { RangeNormalizer } from './utils/RangeNormalizer';
+import { ByteRange } from '../../domain/value-objects/ByteRange';
 import config from '../../config';
 
 describe('WebTorrentStreamService', () => {
-    let service: WebTorrentStreamService;
     let mockLogger: ILogger;
 
     beforeEach(() => {
@@ -20,60 +21,95 @@ describe('WebTorrentStreamService', () => {
             debug: vi.fn(),
             log: vi.fn()
         };
-        service = new WebTorrentStreamService(mockLogger);
-    });
-
-    afterEach(() => {
-        vi.clearAllMocks();
     });
 
 
-    describe('_parseRangeHeader', () => {
+    describe('RangeParser', () => {
         it('should parse bytes=START-END format', () => {
-            const result = (service as any)._parseRangeHeader('bytes=100-200');
-            expect(result).toEqual({ start: 100, end: 200, type: 'start-end' });
+            const result = RangeParser.parse('bytes=100-200');
+            expect(result.success).toBe(true);
+            if (result.success) {
+                expect(result.value).toEqual({ type: 'start-end', start: 100, end: 200 });
+            }
         });
 
         it('should parse bytes=START- format', () => {
-            const result = (service as any)._parseRangeHeader('bytes=100-');
-            expect(result).toEqual({ start: 100, end: null, type: 'start-only' });
+            const result = RangeParser.parse('bytes=100-');
+            expect(result.success).toBe(true);
+            if (result.success) {
+                expect(result.value).toEqual({ type: 'start-only', start: 100 });
+            }
         });
 
         it('should parse bytes=-SUFFIX format', () => {
-            const result = (service as any)._parseRangeHeader('bytes=-500');
-            expect(result).toEqual({ start: null, end: null, type: 'suffix', suffix: 500 });
+            const result = RangeParser.parse('bytes=-500');
+            expect(result.success).toBe(true);
+            if (result.success) {
+                expect(result.value).toEqual({ type: 'suffix', suffix: 500 });
+            }
         });
 
-        it('should return null for invalid range', () => {
-            expect((service as any)._parseRangeHeader('invalid')).toBeNull();
-            expect((service as any)._parseRangeHeader('bytes=')).toBeNull();
-            expect((service as any)._parseRangeHeader('bytes=100,200')).toBeNull(); // multiple ranges
+        it('should return error for invalid range', () => {
+            expect(RangeParser.parse('invalid').success).toBe(false);
+            expect(RangeParser.parse('bytes=').success).toBe(false);
+            expect(RangeParser.parse('bytes=100,200').success).toBe(false); // multiple ranges
         });
     });
 
-    describe('_normalizeRange', () => {
+    describe('RangeNormalizer', () => {
         it('should normalize start-only range', () => {
-            const parsed = { start: 100, end: null, type: 'start-only' as const };
-            const result = (service as any)._normalizeRange(parsed, 1000, 'test.mp4');
-            expect(result).toEqual({ start: 100, end: Math.min(100 + config.CHUNK_SIZE - 1, 999) });
+            const parsed = { type: 'start-only' as const, start: 100 };
+            const result = RangeNormalizer.normalize(parsed, 1000, config.CHUNK_SIZE, mockLogger, 'test.mp4');
+            expect(result).toBeInstanceOf(ByteRange);
+            expect(result?.start).toBe(100);
+            expect(result?.end).toBe(Math.min(100 + config.CHUNK_SIZE - 1, 999));
         });
 
         it('should normalize suffix range', () => {
-            const parsed = { start: null, end: null, type: 'suffix' as const, suffix: 500 };
-            const result = (service as any)._normalizeRange(parsed, 1000, 'test.mp4');
-            expect(result).toEqual({ start: 500, end: 999 });
+            const parsed = { type: 'suffix' as const, suffix: 500 };
+            const result = RangeNormalizer.normalize(parsed, 1000, config.CHUNK_SIZE, mockLogger, 'test.mp4');
+            expect(result).toBeInstanceOf(ByteRange);
+            expect(result?.start).toBe(500);
+            expect(result?.end).toBe(999);
         });
 
         it('should normalize start-end range', () => {
-            const parsed = { start: 100, end: 200, type: 'start-end' as const };
-            const result = (service as any)._normalizeRange(parsed, 1000, 'test.mp4');
-            expect(result).toEqual({ start: 100, end: 200 });
+            const parsed = { type: 'start-end' as const, start: 100, end: 200 };
+            const result = RangeNormalizer.normalize(parsed, 1000, config.CHUNK_SIZE, mockLogger, 'test.mp4');
+            expect(result).toBeInstanceOf(ByteRange);
+            expect(result?.start).toBe(100);
+            expect(result?.end).toBe(200);
         });
 
         it('should return null for invalid range (end < start)', () => {
-            const parsed = { start: 200, end: 100, type: 'start-end' as const };
-            const result = (service as any)._normalizeRange(parsed, 1000, 'test.mp4');
+            const parsed = { type: 'start-end' as const, start: 200, end: 100 };
+            const result = RangeNormalizer.normalize(parsed, 1000, config.CHUNK_SIZE, mockLogger, 'test.mp4');
             expect(result).toBeNull();
+        });
+    });
+
+    describe('ByteRange', () => {
+        it('should create valid range', () => {
+            const range = new ByteRange(100, 200);
+            expect(range.start).toBe(100);
+            expect(range.end).toBe(200);
+            expect(range.size).toBe(101);
+        });
+
+        it('should throw error for invalid range (start > end)', () => {
+            expect(() => new ByteRange(200, 100)).toThrow();
+        });
+
+        it('should clamp range to file size', () => {
+            const range = new ByteRange(100, 200);
+            const clamped = range.clamp(150);
+            expect(clamped.end).toBe(149);
+        });
+
+        it('should apply chunk limit', () => {
+            const range = new ByteRange(0, 1000000);
+            const limited = range.applyChunkLimit(500000, 1000000);
+            expect(limited.end).toBeLessThanOrEqual(499999);
         });
     });
 });

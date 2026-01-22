@@ -47,6 +47,7 @@ export function createMockTorrentFile(
         length,
         path,
         createReadStream(options?: { start?: number; end?: number }): NodeJS.ReadableStream {
+            // eslint-disable-next-line @typescript-eslint/no-var-requires
             const { Readable } = require('stream');
             const start = options?.start || 0;
             const end = options?.end || length - 1;

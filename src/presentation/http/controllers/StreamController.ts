@@ -45,10 +45,15 @@ export class StreamController {
             }
 
             // Stream video using stream service
+            // Note: streamVideo may start sending response asynchronously
+            // Don't send error response if headers are already sent
             this.streamService.streamVideo(req, res, result.file);
         } catch (error) {
-            const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-            res.status(500).json({ error: errorMessage });
+            // Only send error if headers haven't been sent yet
+            if (!res.headersSent) {
+                const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+                res.status(500).json({ error: errorMessage });
+            }
         }
     }
 }
